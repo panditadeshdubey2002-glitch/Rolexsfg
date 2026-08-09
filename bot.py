@@ -2194,7 +2194,7 @@ def build_api_list():
         "body": {}
     })
     
-    # Remove duplicates based on URL and method
+    # Remove duplicates
     seen = set()
     unique_apis = []
     for api in apis:
