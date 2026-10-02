@@ -8,7 +8,8 @@
     "REQUIRED_CHANNEL": {"description": "Channel", "value": "@rolexxbomber"},
     "CHANNEL_LINK": {"description": "Channel link", "value": "https://t.me/rolexxbomber"},
     "MAX_WORKERS": {"description": "Normal workers", "value": "30"},
-    "SMS_MAX_WORKERS": {"description": "SMS workers", "value": "50"}
+    "SMS_MAX_WORKERS": {"description": "SMS workers", "value": "50"},
+    "CHANNEL_CHECK": {"description": "true/false — false to disable force join", "value": "true"}
   },
   "buildpacks": [{"url": "heroku/python"}]
-      }
+}
