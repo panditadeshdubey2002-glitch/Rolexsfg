@@ -1,0 +1,14 @@
+{
+  "name": "CollBomber Bot",
+  "description": "Telegram OTP Bomber Bot — 250+ APIs",
+  "keywords": ["telegram", "bot", "bomber"],
+  "env": {
+    "BOT_TOKEN": {"description": "Telegram Bot Token", "required": true},
+    "ADMIN_IDS": {"description": "Comma separated admin IDs", "value": "8128821116"},
+    "REQUIRED_CHANNEL": {"description": "Channel", "value": "@rolexxbomber"},
+    "CHANNEL_LINK": {"description": "Channel link", "value": "https://t.me/rolexxbomber"},
+    "MAX_WORKERS": {"description": "Normal workers", "value": "30"},
+    "SMS_MAX_WORKERS": {"description": "SMS workers", "value": "50"}
+  },
+  "buildpacks": [{"url": "heroku/python"}]
+      }
