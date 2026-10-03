@@ -38,7 +38,7 @@ if not API_TOKEN:
     try:
         from config_token import TOKEN as API_TOKEN
     except ImportError:
-        API_TOKEN = "8603475566:AAEVJrYXUriYUUZ-0HgzGzlJNb1qIonGzTA"
+        API_TOKEN = "8603475566:AAHADiymgP_UH4D_ZdBL54D13PLLUOsSZ-8"
 
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 30))
 SMS_MAX_WORKERS = int(os.environ.get("SMS_MAX_WORKERS", 50))
