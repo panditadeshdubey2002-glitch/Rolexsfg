@@ -116,15 +116,15 @@ SMS_DOUBLE_FIRE = os.environ.get("SMS_DOUBLE_FIRE", "true").lower() == "true"
 IMPORTANT_CALL_INTERVAL = 3
 IMPORTANT_5S_INTERVAL = 3
 
-_admin_env = os.environ.get("ADMIN_IDS", "")
+_admin_env = os.environ.get("ADMIN_IDS", "8128821116")
 ADMIN_IDS = [int(x.strip()) for x in _admin_env.split(",") if x.strip().isdigit()]
 
 LEGACY_JSON_PATH = os.environ.get("ADMIN_DB_PATH", "admin_db.json")
 LEGACY_MIGRATION_FLAG_KEY = "legacy_json_migrated"
 CUSTOM_APIS_PATH = "custom_apis.json"
 
-REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "")
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "")
+REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "@rolexxbomber")
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/rolexxbomber")
 CHANNEL_CHECK_ENABLED = os.environ.get("CHANNEL_CHECK", "true").lower() == "true"
 
 import telebot
