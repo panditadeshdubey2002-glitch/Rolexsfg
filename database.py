@@ -1,4 +1,4 @@
-"""PostgreSQL-backed AdminDB + Custom API storage."""
+"""PostgreSQL-backed AdminDB + Custom API storage — FIXED VERSION."""
 import threading
 import time
 import json
@@ -24,6 +24,8 @@ class AdminDB:
     def __init__(self):
         self.lock = threading.RLock()
         self._ready = False
+        self._stats_buffer = []          # 🔥 NEW: batch buffer for api_stats
+        self._stats_lock = threading.Lock()
         self._ensure_pool()
         self._init_schema()
         self._run_legacy_migration_once()
@@ -74,23 +76,71 @@ class AdminDB:
                 cur.execute("""INSERT INTO global_stats(key, value)
                     VALUES ('total_bombs', 0) ON CONFLICT (key) DO NOTHING;""")
 
+                # 🔥 FIX: ALL missing columns added here (was causing the schema error)
                 safe_alters = [
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_phone TEXT;",
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_mode TEXT;",
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS modes_used TEXT[] DEFAULT '{}';",
+                    # ---- users table: FULL column list ----
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_seen TIMESTAMP;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_sessions INTEGER DEFAULT 0;",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_hits INTEGER DEFAULT 0;",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_ok INTEGER DEFAULT 0;",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_fail INTEGER DEFAULT 0;",
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_rounds INTEGER DEFAULT 0;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS modes_used TEXT[] DEFAULT '{}';",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_phone TEXT;",
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_mode TEXT;",
+
+                    # ---- banned table ----
+                    "ALTER TABLE banned ADD COLUMN IF NOT EXISTS banned_at TIMESTAMP DEFAULT NOW();",
+                    "ALTER TABLE banned ADD COLUMN IF NOT EXISTS banned_by TEXT;",
+
+                    # ---- admins table ----
+                    "ALTER TABLE admins ADD COLUMN IF NOT EXISTS added_by TEXT;",
+                    "ALTER TABLE admins ADD COLUMN IF NOT EXISTS added_at TIMESTAMP DEFAULT NOW();",
+
+                    # ---- verified table ----
+                    "ALTER TABLE verified ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP DEFAULT NOW();",
+
+                    # ---- subscriptions table ----
+                    "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan TEXT;",
+                    "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS started_at TIMESTAMP;",
+                    "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;",
                     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_concurrent INTEGER DEFAULT 2;",
                     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_hours INTEGER DEFAULT 8;",
                     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS price INTEGER DEFAULT 0;",
                     "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;",
+
+                    # ---- keys table ----
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS plan TEXT;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS days INTEGER;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS concurrent INTEGER;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS max_hours INTEGER;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS price INTEGER;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS created_by TEXT;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS created_at TIMESTAMP;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS used BOOLEAN DEFAULT FALSE;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS used_by TEXT;",
+                    "ALTER TABLE keys ADD COLUMN IF NOT EXISTS used_at TIMESTAMP;",
                     "ALTER TABLE keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;",
+
+                    # ---- contact_messages table ----
+                    "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS user_id TEXT;",
+                    "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS username TEXT;",
+                    "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS message TEXT;",
+                    "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP;",
+                    "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS replied BOOLEAN DEFAULT FALSE;",
                     "ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS reply_text TEXT;",
                 ]
                 for sql in safe_alters:
-                    cur.execute(sql)
+                    try:
+                        cur.execute(sql)
+                    except Exception as alter_err:
+                        # Ek column fail ho toh poora schema fail na ho
+                        logger.warning(f"Alter skipped: {alter_err} | sql={sql[:80]}")
+                        conn.rollback()
+                        continue
             conn.commit()
             logger.info("✅ Schema verified/created (existing data preserved)")
         except Exception as e:
@@ -266,6 +316,8 @@ class AdminDB:
     # -------- USERS --------
     def track_user(self, user_id, username, phone, mode):
         uid = str(user_id)
+        # 🔥 FIX: agar username None ho toh bhi safe rehna chahiye
+        safe_username = username if username else f"user_{uid[-4:]}"
         self._exec("""
             INSERT INTO users (user_id, username, first_seen, phone, total_sessions,
                                modes_used, last_active, last_phone, last_mode)
@@ -276,7 +328,7 @@ class AdminDB:
                 last_mode = EXCLUDED.last_mode, phone = EXCLUDED.phone,
                 total_sessions = users.total_sessions + 1,
                 modes_used = (SELECT ARRAY(SELECT DISTINCT unnest(users.modes_used || EXCLUDED.modes_used)));
-        """, (uid, username, phone, mode, phone, mode))
+        """, (uid, safe_username, phone, mode, phone, mode))
 
     def update_stats(self, user_id, ok, fail, rounds, total):
         uid = str(user_id)
@@ -432,16 +484,64 @@ class AdminDB:
         ok = self._exec("DELETE FROM subscriptions WHERE user_id = %s;", (str(user_id),))
         return bool(ok)
 
-    # -------- API STATS --------
+    # -------- API STATS (🔥 FIXED: buffered/batched) --------
     def update_api_stats(self, api_name, success):
-        if success:
-            self._exec("""INSERT INTO api_stats(api_name, success, fail) VALUES (%s,1,0)
-                ON CONFLICT (api_name) DO UPDATE SET success = api_stats.success + 1;""", (api_name,))
-        else:
-            self._exec("""INSERT INTO api_stats(api_name, success, fail) VALUES (%s,0,1)
-                ON CONFLICT (api_name) DO UPDATE SET fail = api_stats.fail + 1;""", (api_name,))
+        """
+        🔥 FIXED: Ab ye direct DB hit nahi karta. Stats ko buffer mein daalta hai
+        aur background flush karta hai. Pool exhaust nahi hoga.
+        """
+        with self._stats_lock:
+            self._stats_buffer.append((api_name, bool(success)))
+            # Har 25 entries ya jab buffer bada ho jaye, flush karo
+            if len(self._stats_buffer) >= 25:
+                self._flush_stats_buffer()
+
+    def _flush_stats_buffer(self):
+        """Buffer ko ek hi transaction mein DB mein daalo."""
+        if not self._stats_buffer:
+            return
+        # Buffer copy karo aur clear karo (thread-safe)
+        with self._stats_lock:
+            batch = list(self._stats_buffer)
+            self._stats_buffer.clear()
+
+        conn = None
+        try:
+            conn = get_pg_conn()
+            with conn.cursor() as cur:
+                for api_name, success in batch:
+                    if success:
+                        cur.execute("""
+                            INSERT INTO api_stats(api_name, success, fail) VALUES (%s,1,0)
+                            ON CONFLICT (api_name) DO UPDATE SET success = api_stats.success + 1;
+                        """, (api_name,))
+                    else:
+                        cur.execute("""
+                            INSERT INTO api_stats(api_name, success, fail) VALUES (%s,0,1)
+                            ON CONFLICT (api_name) DO UPDATE SET fail = api_stats.fail + 1;
+                        """, (api_name,))
+            conn.commit()
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.warning(f"Batch api_stats flush failed ({len(batch)} rows): {e}")
+            # Agar fail ho toh buffer wapas daal do (next flush mein try hoga)
+            with self._stats_lock:
+                self._stats_buffer.extend(batch[:200])  # cap at 200 to avoid memory blow
+        finally:
+            if conn:
+                release_pg_conn(conn)
+
+    def flush_api_stats(self):
+        """Manually buffer flush karo (periodic thread ke liye)."""
+        self._flush_stats_buffer()
 
     def get_api_stats(self):
+        # Pehle pending buffer flush karo, taaki current stats dikhein
+        self._flush_stats_buffer()
         rows = self._exec("SELECT api_name, success, fail FROM api_stats;", fetch="all") or []
         return {r["api_name"]: {"success": r["success"], "fail": r["fail"]} for r in rows}
 
